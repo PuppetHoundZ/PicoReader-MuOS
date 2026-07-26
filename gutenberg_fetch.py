@@ -174,6 +174,16 @@ CATEGORIES = [
     CATEGORY_TRAVEL,
 ]
 
+# v26.07.23.06 (Kaleb's request: per-category download subfolders for
+# EPUBs, same idea as jw_fetch.py's CATEGORIES_NO_FOLDER -- see that
+# one's docstring for the full reasoning). Popular/Latest/Random are
+# browse VIEWS across every genre at once, not a genre themselves -- a
+# random adventure novel landing in a folder literally named "Random"
+# would be a meaningless category to browse later. Every real genre
+# bookshelf (Adventure, Classics, Mystery, etc.) still gets its own
+# subfolder.
+CATEGORIES_NO_FOLDER = [CATEGORY_POPULAR, CATEGORY_LATEST, CATEGORY_RANDOM]
+
 # v0.1.143: Kaleb asked to drop the redundant CATEGORY_TOP100 (our own
 # invented label) since it was functionally identical to CATEGORY_POPULAR
 # (both sort_order=downloads) -- CATEGORY_POPULAR kept as the sole entry,
@@ -392,6 +402,147 @@ def _resolve_download_url(book_id):
         if preferred in candidates:
             return candidates[preferred], None
     return next(iter(candidates.values())), None
+
+
+# v26.07.23.10 BUG FIX (found immediately after the .09 fix above, while
+# spot-checking more books): matching Gutenberg's raw bookshelf text
+# against this app's own CATEGORY_* labels via CATEGORY_FOLDER_
+# PREFERENCE was too brittle -- Gutenberg's real text often differs
+# from this app's simplified wording in small ways ("Children & Young
+# Adult READING" vs this app's "Children & Young Adult"; "SCIENCE-
+# FICTION & Fantasy" vs "Science Fiction & Fantasy") that a plain
+# normalized-string-equality check couldn't see past, silently falling
+# through to "first tag anyway" for those books -- the exact bug this
+# was supposed to fix, just not caught until testing more than one
+# book. Replaced with a simpler, more robust approach: don't try to
+# force Gutenberg's own real category text to match this app's browse-
+# category wording at all -- just deprioritize a small set of known
+# FORMAT categories (short stories, poetry, plays, essays, letters --
+# these describe a book's STRUCTURE, not its subject) and use the
+# first remaining tag, verbatim, as the folder name. Solves the
+# original Sherlock Holmes case (Short Stories filtered out, Crime/
+# Mystery kept) without needing any of Gutenberg's real text to
+# exactly match anything hardcoded here.
+# v26.07.23.11 BUG FIX (found during end-to-end migration testing,
+# right after the .10 fix): resolve_item_category() returning
+# Gutenberg's raw bookshelf text VERBATIM caused a real fragmentation
+# bug -- browsing the real "Crime, Thrillers & Mystery" category (this
+# app's own CATEGORY_MYSTERY, with "&") creates one folder, but the
+# SAME book auto-resolved from a Popular/Latest/Random mixed view
+# returns Gutenberg's raw "Crime, Thrillers and Mystery" (with "and")
+# and creates a SECOND, different folder for what's really the same
+# genre -- exactly the kind of duplicate-location mess Kaleb's
+# migration feature is supposed to prevent, not cause. Fixed by fuzzy-
+# matching a resolved raw name back to this app's own CATEGORIES list
+# (token-overlap, not exact string equality -- exact matching is too
+# brittle against Gutenberg's real wording, see the format-keyword
+# filter's own history above) and using the app's canonical label
+# whenever there's a strong match, so both code paths always agree on
+# one folder name for one real genre. Falls back to Gutenberg's raw
+# text only when nothing in CATEGORIES is a good match.
+_CATEGORY_STOPWORDS = {"and", "the", "of", "a", "an"}
+
+
+def _tokenize_category_name(name):
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    return set(words) - _CATEGORY_STOPWORDS
+
+
+_CATEGORY_TOKENS = {cat: _tokenize_category_name(cat) for cat in CATEGORIES}
+
+
+def _match_to_app_category(raw_name):
+    """Returns the CATEGORIES entry whose own words are ALL found in
+    raw_name's words (extra words in raw_name, like "Reading" tacked
+    onto "Children & Young Adult", don't prevent a match) -- or None if
+    no category is a strong enough match. Confirmed live this correctly
+    unifies: "Crime, Thrillers and Mystery" -> CATEGORY_MYSTERY,
+    "Science-Fiction & Fantasy" -> CATEGORY_SCIFI_FANTASY, "Children &
+    Young Adult Reading" -> CATEGORY_CHILDRENS, "Classics of
+    Literature" -> CATEGORY_CLASSICS."""
+    raw_tokens = _tokenize_category_name(raw_name)
+    if not raw_tokens:
+        return None
+    for cat, tokens in _CATEGORY_TOKENS.items():
+        if tokens and tokens.issubset(raw_tokens):
+            return cat
+    return None
+
+
+_FORMAT_CATEGORY_KEYWORDS = ("short stories", "poetry", "poems", "plays",
+                             "drama", "essays", "speeches", "letters")
+
+
+def resolve_item_category(item):
+    """v26.07.23.08/.10 (Kaleb's request: "New Issues, Popular, Latest,
+    Random should show category markers from the Gutenberg [detail
+    page's] json file" -- Popular/Latest/Random mix every genre
+    together, so main.py calls this ONLY for those views to recover
+    the book's own real bookshelf instead of leaving it flat.
+
+    List-view results (what populates the browse screen) carry NO
+    subject/bookshelf tags at all -- confirmed live, see the CATEGORIES_
+    NO_FOLDER comment below and _resolve_download_url()'s own v26.07.20.02
+    comment. Only a book's own {id}.opds DETAIL page has them, as
+    real <category> LCSH terms plus rel='related' links -- some of
+    those links are titled "In Category: <bookshelf name>..." (a real
+    ellipsis character, not truncation) when the book is filed under
+    one of Gutenberg's own curated bookshelves; others are titled
+    differently ("By <author>...", "On <subject>...", or a bookshelf
+    name with no "Category:" prefix at all, e.g. "In Detective
+    Fiction...") and aren't used here -- only an exact "In Category:"
+    prefix is treated as a real genre bookshelf worth a folder.
+
+    Among a book's "In Category:" tags, the first one NOT matching
+    _FORMAT_CATEGORY_KEYWORDS is used, verbatim (Gutenberg's own real
+    text, not forced onto this app's differently-worded CATEGORIES
+    list) -- confirmed live across several books:
+      Sherlock Holmes (1661): Short Stories, Crime Thrillers and
+        Mystery, British Literature -> "Crime, Thrillers and Mystery"
+        (Short Stories filtered out as a format, not a genre)
+      Pride and Prejudice (1342) -> "Romance"
+      Alice in Wonderland (11)   -> "Children & Young Adult Reading"
+      Frankenstein (84)          -> "Science-Fiction & Fantasy"
+    Falls back to the first tag found (even if it IS a format category)
+    only when every tag on the book is format-only -- still a useful
+    folder rather than nothing.
+
+    This is a SEPARATE detail-page fetch from the one download() makes
+    moments later to resolve the actual EPUB URL -- an accepted extra
+    network round-trip (not the "zero extra cost" reuse the adult-
+    content filter gets, since that check runs INSIDE download()'s own
+    existing fetch) in exchange for keeping main.py's calling code
+    simple: it can call this before deciding on a destination folder,
+    independently of whether the download itself later succeeds.
+    Returns None (stay flat) on any fetch failure or if the book isn't
+    filed under any real "In Category:" bookshelf -- never raises."""
+    book_id = item.get("_gb_id")
+    if not book_id:
+        return None
+    url = BOOK_DETAIL_URL.format(id=book_id)
+    try:
+        root = _get_xml(url)
+    except (urllib.error.URLError, TimeoutError, ET.ParseError, OSError):
+        return None
+    prefix = "In Category:"
+    found = []
+    for entry in root.findall("a:entry", NS):
+        for link in entry.findall("a:link[@rel='related']", NS):
+            title = (link.get("title") or "").strip()
+            if title.startswith(prefix):
+                name = title[len(prefix):].strip().rstrip("\u2026").strip()
+                if name:
+                    found.append(name)
+        break  # OPDS detail pages repeat the same single entry's links
+               # across the feed (confirmed live: identical link set
+               # appeared twice for id 1661) -- only the first <entry>
+               # needs checking, not every one.
+    if not found:
+        return None
+    for name in found:
+        if not any(kw in name.lower() for kw in _FORMAT_CATEGORY_KEYWORDS):
+            return _match_to_app_category(name) or name
+    return _match_to_app_category(found[0]) or found[0]
 
 
 # ---------------------------------------------------------------------------

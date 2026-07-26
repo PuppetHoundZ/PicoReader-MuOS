@@ -6,7 +6,7 @@ canvas-height table -- RG34XX/RG34XX SP (3:2, native, no bars),
 RG28XX/RG35XX/RG40XX and TrimUI Brick (4:3, exact match, no bars),
 TrimUI Smart Pro (16:9, matched to 3:2, pillarboxed) -- SW stays a
 fixed 720 throughout; render filtering uses SDL2's default (nearest)
-uniformly on every device, no scale-quality hint set, v26.07.18.11)
+uniformly on every device, no scale-quality hint set, v26.07.24.07)
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
@@ -65,7 +65,1036 @@ scrolled to your current reading position, not always the top of the list.
 
 ===========================================================================
 AI NOTES -- read this first if you're a future Claude session picking this
-project back up. This describes the CURRENT build only (v26.07.21.43).
+project back up. This describes the CURRENT build only (v26.07.24.07).
+
+EXIT-TOAST PRE-RENDER MISSED THE TWO NEW DOWNLOAD-FLOW QUIT SOURCES
+(v26.07.24.07 BUG FIX, Kaleb's request: "bug check, make sure the exit
+toast shows for Exit App"): the quit_requested toast block (main loop,
+right after handle_button()) picks which screen to draw ONE frame of
+behind the "Exiting Pico Reader" toast -- it used to be a plain binary
+check (SCREEN_LIBRARY vs "else, assume reader"), correct back when only
+Library's B-quit and the Reader menu's Exit App existed and neither of
+the new download-flow "Exit App" choices (SCREEN_DOWNLOAD_BROWSE_MENU/
+SCREEN_DOWNLOAD_QUICK_MENU, v26.07.24.01/.05) reset app.screen before
+setting quit_requested -- it stays on whichever popup fired it, so it
+was silently falling into the "else: draw_reader()" branch, which
+would draw a stale/wrong (or entirely absent) book page behind the
+toast instead of the actual download screen being exited from. Fixed
+with explicit branches for both, each drawing its own underlying
+picker screen directly (same "show just the screen underneath, without
+the now-closing popup" convention the existing SCREEN_MENU case
+already uses). All four real quit_requested=True sites in the file
+(Library B-quit, BROWSE_MENU Exit App, QUICK_MENU Exit App, Reader
+Menu Exit App) now confirmed covered by name, not by binary fallback.
+
+QUICK MENU: FONT SIZE +/- ADDED (v26.07.24.06, Kaleb's follow-up:
+"were those pop up menus supposed to have font size controls in
+Gutenberg and JW py... is that still there?"). Gap found: L/R still
+worked as a direct hotkey on all six picker screens (font_size_
+hotkey(), unchanged since v26.07.23.30/.32), but the new X-triggered
+SCREEN_DOWNLOAD_QUICK_MENU itself never listed "Font Size +"/"Font
+Size -" as items, unlike SCREEN_DOWNLOAD_BROWSE_MENU's own popup,
+which already does. Added to _download_quick_menu_items(), same
+app.fonts.bigger()/smaller() mutators and "stays open" (menu doesn't
+close on press, so the label/font updates live and can be pressed
+again) behavior as BROWSE_MENU's own identical items.
+
+QUICK MENU CORRECTED TO OPEN VIA X, NOT START (v26.07.24.05, Kaleb's
+correction: "never asked for START... pop up menu was always X and
+that's where those new features should have been added"). All six
+picker screens now open SCREEN_DOWNLOAD_QUICK_MENU via X, matching
+every other popup menu in the app (reader Menu, SCREEN_DOWNLOAD_
+BROWSE_MENU). SOURCES/CATEGORIES used to bind X directly to SCREEN_
+DOWNLOAD_HELP -- that's now folded into the quick menu as a "Help"
+item instead of a separate binding, via the new _download_quick_menu_
+items(app) helper (conditionally includes "Help" only for those two
+screens, so nothing reachable before became unreachable and nothing
+new leaked onto the other four, which never had a Help binding).
+VIDEO_SOURCES/VIDEO_SERIES/AUDIO_SOURCES/AUDIO_BOOKS had no X binding
+at all before this feature existed, so X was simply free there.
+
+LIBRARY/EXIT APP QUICK MENU FOR ALL DOWNLOAD-FLOW SCREENS
+(v26.07.24.04, Kaleb's request: "I want Return to Library and Exit App
+on all the Gutenberg and JW popup menus added just like reader mode...
+especially JW.py because there are a lot of sub categories, to just
+exit the app or access back to library I have to press B a lot" --
+labels/functionality then corrected to exactly match the reader
+Menu's own "Library"/"Exit App" items, and confirmed it needed to stay
+a real popup, not a bare hotkey, "for consistency"): new SCREEN_
+DOWNLOAD_QUICK_MENU, a minimal two-item overlay popup (Library / Exit
+App / Back) reachable via START from all six source/category picker
+screens (SOURCES, CATEGORIES, VIDEO_SOURCES, VIDEO_SERIES, AUDIO_
+SOURCES, AUDIO_BOOKS) -- START confirmed free on all six. draw_
+download_quick_menu() draws the correct underlying picker screen first
+(via app.dl_quick_menu_return_screen), then the same overlay-panel
+style as the existing SCREEN_DOWNLOAD_BROWSE_MENU. SCREEN_DOWNLOAD_
+BROWSE already had its own real popup -- "Library"/"Exit App" were
+added directly into _download_browse_menu_items()'s existing list
+instead of a second overlay there. Both "Library" choices call the
+exact same body as the reader Menu's own "Library" item (refresh_
+library()/lib_index=0/flush_pin_finished_now()), plus the download-
+plugin-specific clear_search_token_cache() cleanup SCREEN_DOWNLOAD_
+BROWSE's "B" handler already does when leaving the plugin entirely --
+no save_progress() here, unlike the reader version, since there's no
+open book in this context. "Exit App" matches Library's own B-to-quit
+cue (play_sound("error") + quit_requested=True) exactly.
+NOT YET CONFIRMED ON REAL HARDWARE.
+
+VIDEO D-PAD UP/DOWN: BRIGHTNESS REPLACED, AUDIO QUEUE CARD DROPPED,
+UINPUT REGISTRATION BUG FIX (v26.07.24.02-.03, Kaleb's on-device
+reports): three related fixes in native_video.py/main.py:
+
+(1) AUDIO queue transitions (play_audio_queue_from) no longer draw a
+custom "Now Playing" title card between tracks -- mpv already shows
+the track title natively via --osd-playing-msg=${media-title}
+(_MPV_AUDIO_ARGS), so the card was pure redundancy there; ffplay has
+no on-screen title capability at all, so it never worked on that path
+either way. on_track_change now just does the same plain blank
+double-clear+present used everywhere else at the mpv/ffplay display-
+handoff boundary. VIDEO (play_video_queue_from) KEEPS its title card
+(double-presented, see the v26.07.24.01 entry below) since neither
+player shows any title on-screen for video -- no native fallback there.
+
+(2) D-pad Up/Down on VIDEO used to control mpv's live `brightness`
+property (Kaleb: "does absolutely nothing"). Root cause: muOS's own
+real mpv invocation (github.com/MustardOS/internal, script/launch/
+ext-mpv.sh) sets no --vo override, so mpv auto-selects hardware video
+decode on this SoC, and brightness/contrast/saturation/gamma all run
+through a software color-equalizer stage hwdec frequently bypasses --
+a known mpv limitation, not fixable from this app, and one that rules
+out every other eq-family property as a replacement too. Replaced with
+two properties outside the color pipeline entirely: UP toggles the
+title/progress OSD staying on screen (KEY_G, cycle-values osd-level 1
+3 -- reuses the exact same real property audio's own D-pad UP already
+used), DOWN toggles mute (new KEY_M, 'm' -- genuinely native "toggle
+mute" on BOTH mpv and ffplay, confirmed via ffplay.c's own toggle_mute/
+SDLK_m handler, not just a coincidental no-op like some other shared
+keys here). Brightness (KEY_BRIGHTNESS_DOWN/UP, i/o) fully removed.
+
+(3) BUG FOUND while wiring up KEY_M: VirtualKeyboard.create()'s
+UI_SET_KEYBIT registration loop never included KEY_G/KEY_V at all --
+audio's own D-pad Up/Down title/album-art toggle (shipped v26.07.23.26/
+.28) was very likely silently non-functional on real hardware this
+whole time, same "button does nothing" symptom as (2) but from an
+unrelated cause (a uinput virtual device only reliably delivers key
+codes it declared capability for at creation time). Fixed by adding
+KEY_G, KEY_V, KEY_M to the registration list.
+
+NOT YET CONFIRMED ON REAL HARDWARE: all three fixes above -- please
+retest audio Play All/Shuffle All (title card gone, no glitch), video
+Play All/Shuffle All (title card still shows, no glitch), and video's
+new D-pad Up (title/progress toggle) and Down (mute) bindings.
+
+QUEUE-TRANSITION VIDEO/AUDIO GLITCH FIX (v26.07.24.01, Kaleb's real
+on-device report: "in between each video, glitchy text shows up with
+the title of the next video just before it plays... looks like our
+PicoReader text is bleeding through"): play_video_queue_from()'s own
+_on_track_change() callback (the "Play All (2/8) <title>" card shown
+between queue items) was only drawing and presenting ONCE per
+transition. Same root cause already documented elsewhere in this file
+for the mpv/ffplay direct-display boundary: those players draw
+straight to the display, entirely outside this SDL renderer's dirty-
+rect tracking, so a single RenderPresent only guarantees ONE of the
+two swapchain buffers holds the new frame -- the other can still be
+showing the previous track's last raw video frame, producing exactly
+this alternating/torn "text bleeding through" look. Fix draws+presents
+the identical card twice, guaranteeing both buffers agree before
+play_jw_video() blocks on the next item. (v26.07.24.02 dropped this
+same pattern for AUDIO entirely -- see above.)
+
+JW AUDIO CATEGORIES EXPANDED TO REAL MUSIC SUB-CATEGORIES + DOWNLOAD ALL
+(v26.07.23.01, Kaleb's request from real JW Library app screenshots):
+AUDIO_SOURCES (jw_fetch.py) used to have one flat "Songbook -- Sing Out
+Joyfully to Jehovah" entry (pub "sjjm"). Confirmed live against the real
+mediator "Audio" container category (GET .../categories/E/Audio?
+detailed=1&clientType=www) that there are 7 real subcategories, not one:
+Original Songs, "Sing Out Joyfully" to Jehovah--Meetings/Vocals/
+Instrumental, Sing to Jehovah--Chorus, Children's Songs, Kingdom
+Melodies. All 7 now have their own AUDIO_SOURCES entry (new loader:
+list_mediator_audio_category(), the audio-shaped twin of
+list_mediator_category() -- single file per media entry, no rendition
+choice, unlike video). Checked for duplicates directly against jw.org's
+own tree -- none; the two songbooks share a couple of song titles
+(different eras, some songs carried over) but are genuinely separate
+catalogs. The 3 custom non-JW.org entries (Watchtower Study Audio,
+Bible Reading Audio, Search Audio) are deliberately kept as-is --
+useful conveniences, not part of jw.org's own category tree, not
+duplicates of anything.
+
+All 7 are flagged "music_category": True, which drives a new "Download
+All" action in the SCREEN_DOWNLOAD_BROWSE_MENU popup (App.
+start_download_all(), main.py) -- sequential background download of
+every item in the currently open category, skips already-downloaded
+files, not offered for Watchtower Study Audio/Bible Reading Audio
+(single-issue/single-book sources, not song catalogs). Tracked via a
+new app._current_audio_source (distinct from _pending_audio_source,
+which only ever gets set for "books": True sources) so the menu knows
+which AUDIO_SOURCES entry is open regardless of whether a book-picker
+was involved.
+
+BUG FIX (v26.07.23.02, found during Download All testing): start_
+download() (single-item, "A"/"Download") only checked _dl_downloading_
+idx, not _dl_all_running -- so pressing A on a track while Download All
+was mid-batch fired a second concurrent download thread, racing status_
+msg updates between the two loops exactly like this guard's own
+existing comment already warned against for two single downloads. Both
+download paths now share one "only one at a time" rule. Verified live:
+empty-category no-op, double-trigger blocked, one-broken-URL-among-many
+correctly reported as 1 failed/others fine, and a real partial-then-
+resume run only re-fetched the missing tracks.
+
+DOWNLOADS NOW ORGANIZED INTO PER-CATEGORY SUBFOLDERS + OFFLINE FALLBACK
+LISTING (v26.07.23.03, Kaleb's request, from his own real-device report
+that a category page failed to even load with no WiFi): downloads used
+to all land flat in ROMS/Music or ROMS/movies. App._category_dest_dir()
+(main.py) now returns base_dir/"Category Name" (JW_PLUGIN.
+sanitize_folder_name(), reusing the existing filename-sanitizer's
+character rules) whenever a real category is open -- tracked via new
+app._current_video_source, mirroring _current_audio_source exactly.
+start_download()/start_download_all() write into that subfolder
+(os.makedirs() first); _resolve_media_source() (used by every play_*
+method) checks that same subfolder when deciding whether to play a
+local copy instead of streaming. Search Videos/Search Audio results
+have no single stable category, so they're deliberately left flat
+(_current_*_source stays None for those) -- same as before.
+
+Separately, JW_PLUGIN.list_local_folder_items() (jw_fetch.py) scans a
+category's own subfolder directly off the SD card -- no network call.
+open_plugin_video_list()/open_plugin_audio_list() now fall back to it
+whenever the live fetch fails AND that category's subfolder has
+something in it, so a category you've already run Download All on (or
+even just partly grabbed) still shows those tracks/videos with zero
+internet, instead of a dead "Couldn't reach server" screen. Offline
+items carry no _audio_url/_video_url (nothing to re-fetch, this IS the
+local copy) -- Download/Download All on one of these just report
+"already downloaded" immediately (checked live: safe, no crash, no
+wasted network attempt, since download_audio()/download_video() check
+os.path.exists() before ever touching a URL). New app.dl_offline_local
+flag shows an "[OFFLINE -- downloaded only]" note in the title bar so
+this never looks like a normal successful live load. Verified live end-
+to-end: downloaded a real category into its subfolder, then simulated
+the network failing and confirmed the offline scan reconstructs the
+exact same list, and that playback correctly resolves to the local
+file inside that subfolder.
+
+Kaleb confirmed no backward-compatibility concern with pre-v26.07.23.03
+flat downloads -- wiping and starting fresh, so no flat-path fallback
+logic was added to _resolve_media_source() (would otherwise need to
+check two locations forever).
+
+SCREEN POWER BEHAVIOR DURING PLAYBACK -- LID/STANDBY TOGGLES
+(v26.07.23.12-.13, Kaleb's request: screen should dim during music,
+wake on button/lid-open, keep playing through a lid close, "like
+Songo#5" -- a real dedicated music player for these same handhelds,
+whose own developer confirmed relying on "the host cfw itself" for
+this exact kind of behavior rather than inventing anything custom):
+
+Source-confirmed (NOT guessed) via MustardOS/internal: RG34XX-SP/
+RG35XX-SP have a real hall-effect lid sensor; muOS's own hotkey.sh maps
+lid-close to the same SLEEP_LONG hotkey a long power-button-press uses,
+which calls a shared SLEEP() function that writes directly to /sys/
+power/state -- a genuine kernel suspend, freezing EVERY process
+including mpv/ffplay. There is no software way to "keep playing"
+through an actual suspend -- so every toggle below is really about
+whether a real suspend is allowed to happen at all, using two
+primitives: suppress_idle_display(allow_manual_sleep=...) (blocks
+passive idle-timeout dim/suspend always; the caffeine file -- SLEEP()'s
+own gate, confirmed by reading hotkey.sh directly -- is only created
+when allow_manual_sleep=False, additionally blocking a MANUAL lid/
+standby-triggered suspend too) and suppress_suspend_only() (creates
+ONLY the caffeine file, leaving idle_display's own separate screen-
+blank timeout completely untouched).
+
+AUDIO: new three-way "On Lid/Standby" toggle in the audio popup menu
+(native_video.AUDIO_LID_MODES): "Stop Playback" (passive dim/suspend
+blocked, but a real lid/standby suspend goes through -- music
+genuinely stops, resumes on wake), "Dim & Continue" (NEW DEFAULT --
+suppress_suspend_only(): screen dims/blanks via muOS's own normal
+timeout, but no suspend from any source, so music always keeps
+playing), "Keep Screen On" (screen never dims, matches Songo#5's own
+"keep screen awake" toggle per its developer's interview). Shared
+dispatch (_apply_audio_lid_mode()/_restore_audio_lid_mode()) used by
+both single-track and full-queue playback, so they always agree.
+Persisted (audio_lid_mode in settings.json).
+
+VIDEO: new two-way "On Lid/Standby" toggle, same popup menu location --
+"Stop Playback" (NEW DEFAULT, matches what Kaleb described as normal/
+expected: passive dim/suspend still blocked while actively watching,
+but a deliberate lid-close/standby-press suspends for real) / "Keep
+Playing" (the OLD behavior -- caffeine blocks even a manual suspend
+attempt, screen only blanks, video/audio keeps running, for anyone who
+wants audio-only background listening from a video source). Persisted
+(video_stop_on_lid_close in settings.json).
+
+BUG FIX (found during this session's own bug audit, before ever
+shipping): the popup menu's button handler unconditionally closes the
+menu (sets screen back to SCREEN_DOWNLOAD_BROWSE) BEFORE dispatching
+the chosen action -- true for every item that existed before "On Lid/
+Standby", so nothing needed a "stays open" exception until now. First
+draft's own comment incorrectly claimed it "stays open, same as
+Filter: Cycle" (a DIFFERENT menu, SCREEN_LIBRARY_MENU, which has no
+such unconditional close) -- caught by re-reading the actual dispatch
+code, not just trusting the comment. Fixed by explicitly skipping the
+auto-close for this one choice; verified live with a direct simulation
+of both the toggle (stays open) and every other item (still closes).
+
+FONT SIZE HOTKEY MOVED FROM L2/R2 TO L1/R1 ON ALL SIX DOWNLOAD-FLOW
+SCREENS (v26.07.23.32, Kaleb's request: "make those L1 R1 font size...
+the 6th screen we should modify jump 10 items with the left and right
+d pad if that's not mapped and make the l and r font"): App.font_size_
+hotkey() (added v26.07.23.30) now checks for "L"/"R" (the L1/R1
+shoulder buttons) instead of "L2"/"R2" -- a single change to the one
+shared helper automatically applies to all six screens that already
+call it (SCREEN_DOWNLOAD_SOURCES, _CATEGORIES, _VIDEO_SOURCES,
+_AUDIO_SOURCES, _VIDEO_SERIES, _AUDIO_BOOKS), no per-screen edits
+needed beyond the one exception below.
+
+SCREEN_DOWNLOAD_CATEGORIES was the one screen where L/R weren't free
+(already bound to jump-10-items navigation) -- confirmed live via its
+real button handler that "LEFT"/"RIGHT" (the D-pad's own directional
+buttons, distinct from the "L"/"R" shoulder-button strings in this
+app's naming) were genuinely unused there. Moved jump-10 navigation
+from L/R to D-pad LEFT/RIGHT, freeing L/R to join the font_size_hotkey()
+convention the other five screens already use -- all six screens are
+now fully consistent. Verified live via direct simulation: LEFT/RIGHT
+correctly jump 10 items with no collision against L/R's now-separate
+Font Size role.
+
+
+ALL DOWNLOAD-FLOW SCREENS; MEETING WORKBOOKS 6-MONTH-AHEAD LIVE PROBE
+(v26.07.23.29-.31, Kaleb's combined report + requests):
+
+(29) ROLLBACK -- "the open close settings for keeping on don't work at
+all in any way it always goes to standby no matter what when you close
+the lid... let's default to the original plan for both video and audio
+[and] remove the settings toggle": the v26.07.23.12-.20 "On Lid/
+Standby" three-way audio / two-way video toggle never worked as
+designed on real hardware. Fully removed: video_stop_on_lid_close and
+audio_lid_mode settings, the "On Lid/Standby" popup-menu items and
+their dispatch, and every native_video.py function/parameter that
+existed only to support them (suppress_suspend_only()/restore_suspend_
+only(), AUDIO_LID_MODES/AUDIO_LID_MODE_LABELS, _apply_audio_lid_mode()/
+_restore_audio_lid_mode(), the allow_manual_sleep param on suppress_
+idle_display()/play_jw_video()/play_video_queue(), the lid_mode param
+on play_audio_queue()). suppress_idle_display()/restore_idle_display()
+are back to their original, simpler, well-tested unconditional form --
+both video and audio now always keep the screen from sleeping during
+playback, no toggle to select anything different. All four playback
+call sites (single/queue x audio/video) updated accordingly. Confirmed
+clean via full compile -- zero dangling references to anything removed.
+
+(30) "In both gutenberg py and JW py all pop up menus need to have the
+font size option added... some categories don't have features other
+than select to open the list... I need to change font sometimes and
+it's difficult. Also in all video add the toggle for fit to screen and
+full screen": added "Font Size +"/"Font Size -" (reusing app.fonts.
+bigger()/smaller(), the exact same mutators the reading-view menu and
+Library screen's own L/R hotkey already use) to the existing SCREEN_
+DOWNLOAD_BROWSE_MENU popup, for every branch (video/audio/generic
+EPUB) -- plus "Screen Scaling: Fit/Fill" for video specifically,
+reusing the existing video_fill_screen setting. Both correctly use the
+"stays open" dispatch pattern (verified live via direct simulation of
+all 7 possible menu choices) so they can be pressed repeatedly without
+re-opening the menu each time.
+
+For the SIX download-flow screens that have no popup menu at all
+(SCREEN_DOWNLOAD_SOURCES, _CATEGORIES, _VIDEO_SOURCES, _AUDIO_SOURCES,
+_VIDEO_SERIES, _AUDIO_BOOKS -- exactly Kaleb's "some categories don't
+have features other than select" case), building six near-duplicate
+popup UIs was overkill for what's fundamentally a simple access
+problem. Instead: new App.font_size_hotkey(btn) shared helper, bound to
+L2/R2 on all six screens -- confirmed via direct inspection of each
+screen's real button handler (not guessed) that L2/R2 are genuinely
+unused everywhere, unlike plain L/R (SCREEN_DOWNLOAD_CATEGORIES already
+uses those for jump-10 navigation) or X (taken by Help on two of the
+six). Same app.fonts.bigger()/smaller() mutators and status-message
+wording as every other Font Size control in the app.
+
+(31) BUG FIX -- "meeting workbooks are missing we need to adjust that
+category to call the actual category similar to videos if that doesn't
+exist we need to create a check for all future issues of the next six
+months in advance. Because currently we have the whole years work
+books released": checked live whether a real mediator category exists
+for Meeting Workbooks the way Audio/Video have (every reasonable
+category-key guess 404'd) -- confirmed that API is audio/video-only;
+EPUB publications use the separate pub-code-keyed GETPUBMEDIALINKS
+lookup instead, which has no "browse this publication's catalog"
+capability, so there's nothing to switch generate_mwb_back_issues()
+to. Confirmed the actual reported bug live: check_new_issues()'s RSS
+feed had ZERO "mwb" entries at all that day (only a Watchtower one),
+so this function's fallback chain dropped all the way to a bare
+calendar guess -- which only reached July 2026, while September AND
+November 2026 were BOTH already real, live, downloadable EPUBs on
+jw-cdn.org at that exact moment (confirmed directly against GETPUBMEDIA
+LINKS, not assumed).
+
+New _mwb_probe_furthest_available(months_ahead=6): actively checks
+each real bi-monthly issue slot forward from today directly against
+GETPUBMEDIALINKS (the same live-availability mechanism every other
+pub-code lookup in this file already uses), continuing as long as
+issues keep being found, bounded to ~4 real network requests for a
+6-month window (confirmed live: exactly 4). A not-yet-published issue
+returns HTTP 200 with a JSON LIST containing a {"status": 404} object
+(confirmed live, not a dict) -- the existing _extract_epub() already
+handles that shape safely via its own try/except, no new handling
+needed. generate_mwb_back_issues() now tries this probe FIRST, falling
+back to RSS then the calendar guess only if the network genuinely can't
+be reached (verified live: simulated total network failure, confirmed
+graceful fallback with no crash). Verified live end-to-end: the
+generated list now correctly starts at November 2026 (the real
+furthest-ahead published issue) instead of the old, wrong July 2026.
+
+
+(v26.07.23.28, Kaleb's request: "remove auto player mode and only use
+mpv as default and have ffmpeg as alternate option. Also make sure the
+ffmpeg player has the same key mappings"):
+
+"Auto" and "mpv" were already functionally IDENTICAL in the selection
+logic (both preferred mpv first, ffplay as fallback) -- removing "auto"
+as a distinct settings value is a UI/settings simplification, not a
+behavior change. video_player_pref/audio_player_pref now default to
+"mpv" directly; the Video/Audio Player settings cycle is now a simple
+2-way mpv<->ffplay toggle instead of 3-way. Defensive fallback added at
+load time for a stale "auto" value from before this change (or any
+hand-edited settings.json) -- falls back to "mpv" safely rather than
+staying stuck on a value that no longer means anything. Also fixed a
+real bug caught mid-edit: the cycle dict's own .get() fallback default
+was still "auto" after the dict itself was updated to only have mpv/
+ffplay keys -- meaning cycling FROM a stale "auto" value would have
+returned "auto" again forever (a stuck loop, never actually escaping
+to a valid choice). Fixed to fall back to "ffplay" instead, verified
+live that a stale "auto" value now correctly escapes on the first
+press. Same "auto" cleanup applied to native_video.py's own function-
+signature defaults and docstrings (play_jw_video/play_video_queue/
+play_audio_file/play_audio_queue) for full consistency, not just the
+main.py settings layer.
+
+Checking "does ffplay have the same key mappings" required actually
+researching ffplay's real, hardcoded, non-configurable keymap (unlike
+mpv, ffplay has NO input.conf/custom-keybinding system at all -- its
+keys are compiled into the binary) via ffmpeg's own documentation
+(ffmpeg.org/ffplay.html, the ffplay-all man page). This caught a real,
+meaningful bug in the D-pad up "toggle title/progress" feature added
+two versions ago: it used the letter 's', which was assumed to be a
+safe no-op on ffplay the same way i/o (brightness) already are -- but
+ffplay's REAL native 's' binding is "step to next frame", which
+explicitly PAUSES playback first if not already paused. Every press of
+D-pad up during ffplay audio playback would have unexpectedly paused
+the music -- the opposite of a safe no-op, and the opposite of what
+"same key mappings" was supposed to guarantee. Fixed by moving to 'g'
+(KEY_G, value 34, matching this file's existing Linux keycode
+convention exactly), confirmed absent from ffplay's entire real
+documented keymap -- same "unbound letter, genuinely inert on ffplay"
+category i/o already reliably are. 'v' (D-pad down, album art) was
+independently confirmed to already be correct: ffplay's own real 'v'
+binding is "cycle video streams", a genuine match for the intended
+"toggle album art" behavior, not a coincidence needing a fix.
+
+Verified live: cross-checked all 9 keys in the final audio scheme
+against ffplay's complete real keymap -- 7 produce a genuinely matching
+action (pause, quit, seek +-60s, seek +-10s, cycle video/album-art) and
+the remaining one (the title/progress toggle, which has no native
+ffplay equivalent at all) is now a confirmed TRUE no-op instead of the
+previous accidental pause.
+
+
+(v26.07.23.27, Kaleb's request: "since it's an audio player remove
+the brightness and move start and select to d-pad"): brightness made
+more sense for video, where there's always a real image on screen
+worth dimming/brightening, than for an audio player showing at most a
+static cover image. D-pad up/down now carry the title/progress-bar and
+album-art toggles that briefly lived on START/SELECT instead.
+
+Final scheme (10 total inputs -- 6 buttons + 4 D-pad directions):
+A=pause, B=quit, L2/R2=track skip, L1/R1=seek +-60s, D-pad L/R=seek
++-10s, D-pad U=toggle title/progress always-on, D-pad D=toggle album
+art. START/SELECT are now completely unused during audio playback
+again, same as before this whole feature existed.
+
+Since joy_start/joy_select are no longer needed by ANY audio code path,
+removed the plumbing entirely rather than leaving dead parameters
+around: reverted _audio_translate_loop()'s signature, play_audio_
+file()'s signature, play_audio_queue()'s signature (and its own
+internal play_audio_file() call), and both of main.py's audio call
+sites back to not accepting/passing them -- confirmed video's own
+LEGITIMATE, unrelated joy_start/joy_select usage (its own queue-skip
+feature) was left completely untouched throughout, verified by
+checking each remaining reference individually rather than a blind
+find-and-remove. Verified live: confirmed the final function signature
+has no joy_start/joy_select at all, and re-simulated all 6 buttons +
+4 D-pad directions through the real dispatch logic to confirm the
+simplified scheme is correct.
+
+
+(v26.07.23.26, Kaleb's request: "is there an option to toggle the
+album art or visualizer or title on screen? Or progress bar?"):
+confirmed a visualizer specifically is NOT a simple runtime toggle in
+either player -- mpv needs a --lavfi-complex filter graph set at
+LAUNCH time for that, not something a keypress can switch on mid-
+playback, so it's out of scope here. The other two ARE real, native,
+single-command mpv toggles, now wired up on START and SELECT (both
+genuinely unused during audio playback -- confirmed video's own
+audio-adjacent call site uses JOY_BACK, not a separate JOY_SELECT
+constant, which doesn't exist in this codebase):
+
+  START  -- KEY_S -> "cycle-values osd-level 1 3" in the shared mpv
+            input.conf: toggles between the OSD only flashing briefly
+            on seek/pause (level 1, the default everywhere else in
+            this app) and the title+progress bar staying permanently
+            on screen.
+  SELECT -- KEY_V -> "cycle video" in the shared input.conf: mpv's
+            own real, documented command for toggling embedded cover
+            art on/off -- coincidentally also mpv's own stock default
+            keybind for it, just re-declared since --no-config
+            disables built-in defaults, same as every other key here.
+
+Both new KEY_S/KEY_V constants follow this file's existing letter-key
+convention exactly (confirmed against KEY_Q=16/KEY_A_LETTER=30's real
+values -- standard Linux input-event-codes.h layout, not guessed).
+Threaded joy_start/joy_select through the full call chain the same way
+joy_l2/joy_r2 were: _audio_translate_loop() (new handling) ->
+play_audio_file() (new params) -> play_audio_queue() (new params,
+passed to its own internal play_audio_file() call) -> both of main.py's
+audio call sites. Both toggles are safe no-ops on ffplay, which has no
+runtime-togglable equivalent for either. Verified live: confirmed
+KEY_S/KEY_V are genuinely defined (not another KEY_V-style phantom
+reference), simulated all 8 buttons through the real dispatch logic,
+and confirmed all 8 physical button IDs are unique with zero
+collisions.
+
+AUDIO BUTTON SCHEME CORRECTED PER KALEB'S EXACT SPEC (v26.07.23.25):
+the .24 scheme above was immediately revised -- Kaleb wanted a specific
+layout instead: D-pad L/R + L2/R2 for seek/track-skip, L1/R1 for a
+coarser seek, D-pad U/D for a view/brightness toggle, and "use only
+default key binding times that are close match to the times I
+provided" (~15s/~30s) rather than inventing new custom durations.
+Final scheme, all reusing keys/durations video's own translate loop
+already relies on -- no new mpv input.conf entries needed at all:
+A=pause, B=quit, L2/R2=track skip (moved here from L1/R1), L1/R1=seek
++-60s (closest existing duration to the ~30s asked for), D-pad L/R=
+seek +-10s (closest existing match to ~15s), D-pad U/D=brightness +-5
+(a real, already-existing, already-proven toggle -- video's own D-pad
+already uses it).
+
+BUG CAUGHT BEFORE EVER SHIPPING: an earlier draft of the D-pad up/down
+handler tapped KEY_V for a "cycle video"/toggle-view idea (toggling
+embedded cover-art visibility) -- but KEY_V was never actually defined
+anywhere in native_video.py. py_compile's syntax check can't catch a
+missing module-level name referenced inside a function body -- that
+error only surfaces at actual runtime, meaning this would have compiled
+clean and then crashed with NameError the very first time anyone
+pressed D-pad up/down on a real device. Caught by asking "is there any
+toggle for view modes or brightness we can wire up?" before finishing
+the implementation, rather than after -- replaced with KEY_BRIGHTNESS_
+UP/DOWN (native mpv `add brightness +-5`), matching video's own D-pad
+exactly, no new input.conf entry needed.
+
+_audio_translate_loop() now also reads SDL_JOYHATMOTION_EV (D-pad)
+events for the first time -- it previously only ever read button-down
+events, since it never needed the D-pad before this feature existed.
+Verified live: simulated all 6 buttons + all 4 D-pad directions through
+the real dispatch logic, confirmed every one sends the correct,
+already-defined key constant with no naming errors and no conflicts
+between the moved track-skip (L2/R2) and the new seek controls (L1/R1,
+D-pad L/R).
+
+
+Kaleb's report: "doesn't seem like you setup the seek buttons to match
+our mpv player controls" -- and this also fully explains the earlier
+"no progress bar" observation): confirmed a real, genuine gap, not a
+player-selection bug -- _audio_translate_loop() never sent ANY seek
+key at all, only pause (A)/quit (B)/track-skip (L/R). This is exactly
+why mpv's --osd-bar never appeared during audio playback either: that
+OSD only shows in response to a seek/pause/volume action, and nothing
+in the audio loop was ever triggering one, regardless of which player
+was actually running.
+
+L/R (JOY_L/JOY_R) were already spoken for -- track-skip within a
+queue, a deliberate, sensible existing feature -- so seeking can't
+reuse them without conflicting. Confirmed via the real button-ID
+constants (JOY_L=leftshoulder/7, JOY_R=rightshoulder/8, JOY_L2=
+lefttrigger/13, JOY_R2=righttrigger/14) that L2/R2 are completely free
+during audio playback; video reserves them for its own coarser +-10min
+skip, but audio tracks are far shorter, so this maps L2/R2 to mpv's
+FINER +-10s LEFT/RIGHT seek bindings instead (the same input.conf
+already defines both -- this just wires up the more useful one for
+typical song/talk lengths). ffplay natively binds LEFT/RIGHT to the
+identical +-10s seek too, so this works unmodified for either player,
+same as every other audio control already handling both.
+
+Threaded joy_l2/joy_r2 through the full call chain: _audio_translate_
+loop() (new handling) -> play_audio_file() (new params) ->
+play_audio_queue() (new params, passed to its own internal play_audio_
+file() call) -> both of main.py's audio call sites (play_audio_item,
+play_audio_queue_from), now passing JOY_L2/JOY_R2. Verified live by
+simulating all 6 button mappings through the real dispatch logic:
+existing controls (A/B/L/R) confirmed unchanged, new L2/R2 seek
+confirmed sending the correct KEY_LEFT/KEY_RIGHT with no conflicts.
+
+
+pop up menu" / "the pop up is black screen"): draw_download_browse_
+menu() has existed since the popup menu system was FIRST built
+(v26.07.21.42, well before this session -- "drop help menu and replace
+with pop up menu"), and its button handler correctly sets app.screen
+to SCREEN_DOWNLOAD_BROWSE_MENU on X -- but the render dispatch itself
+never had a matching branch to actually CALL the draw function. Every
+frame unconditionally clears the whole screen to black (SDL_RenderClear)
+before the screen-specific draw call runs; with no matching branch for
+this screen, that black clear was the last thing that happened before
+the frame got presented -- indistinguishable from a crash without
+checking process state, exactly matching what Kaleb saw. This affected
+EVERY item-browse list in the app, JW and Gutenberg alike, since
+they all share this one popup menu screen.
+
+Confirmed this predates the entire session (the function is unchanged
+from when it was first written) -- none of this session's own new menu
+items (Download All, On Lid/Standby) caused it; they were just as
+broken as everything else already in that menu, only nobody had
+pressed X to open it and noticed until now. This is also exactly why
+none of this session's own testing ever caught it: every menu-content/
+dispatch test exercised the LOGIC in isolation (which items appear,
+what pressing A does, whether the menu stays open or closes) -- never
+the actual SDL render call chain, since real SDL rendering can't run
+in this sandbox at all. Fixed with one missing elif branch, placed
+right next to SCREEN_DOWNLOAD_BROWSE's own existing entry.
+
+Immediately ran a systematic sweep for the same bug CLASS elsewhere:
+cross-referenced every screen constant with a button handler against
+every screen constant with a render-dispatch entry, looking for any
+other screen reachable via input but never actually drawn. Found zero
+other real instances -- the two apparent mismatches the sweep initially
+flagged (SCREEN_LIBRARY, SCREEN_SPLASH) were confirmed to be false
+positives from the script only matching "elif", not the initial "if"
+each of those two chains actually starts with.
+
+BUG FIX (v26.07.23.22, found during a follow-up sweep on the .21 dedupe
+work): start_download_all()'s per-track dedupe hit set ok=True, which
+the done/skipped/failed counting treats as a genuinely NEW download --
+so a dedupe hit (nothing actually downloaded, an existing copy
+elsewhere just found and left alone) inflated the "N new" count in the
+final summary, e.g. "Download All done: 3 new..." when really only 1
+was new and 2 were already-had-elsewhere. Fixed to ok=False + an
+"already downloaded" message, correctly bucketing as skipped instead,
+matching download_audio()'s own equivalent same-folder message.
+Verified live with a realistic mixed batch (2 genuinely new, 2 dedupe
+hits, 1 real failure) -- summary now correctly reads "2 new, 2 already
+had, 1 failed" instead of "4 new, 0 already had, 1 failed". Also
+confirmed the single-item video/audio download paths didn't have this
+same issue -- ok only controls message text there, no separate
+new-vs-skipped counting exists for a single download, so no
+equivalent fix was needed on that side. Also verified resolve_search_
+video_item()/resolve_search_audio_item() both always return items with
+"filename" present (inherited from resolve_video_link()/resolve_audio_
+link()'s own established item shape), so the new dedupe check can
+never KeyError on a lazily-resolved search result.
+
+VIDEO/AUDIO DOWNLOADS NOW DEDUPE ACROSS CATEGORIES TOO (v26.07.23.21,
+Kaleb's request: "series section files can end up in other
+categories... make series the source of truth to reduce ping-
+ponging"): extended the same real-duplicate-detection the EPUB
+migration feature already had to video and audio downloads too --
+confirmed via jw_fetch.py's own existing comments ("BYTE-IDENTICAL to
+Series' own...") that the SAME video really can be reachable through
+both the "Series" picker and a separate, overlapping VIDEO_SOURCES
+entry, so downloading it from each independently used to create TWO
+SEPARATE COPIES with no dedupe at all (unlike EPUBs, which already had
+this).
+
+Unlike EPUBs (which get a one-time flat -> category MOVE), video/audio
+never sit in a genuine flat/uncategorized state -- they always land in
+SOME category folder via _category_dest_dir(). So the right operation
+here isn't "move" (which is what caused the Gutenberg ping-pong), it's
+"dedupe only": if the exact filename already exists ANYWHERE ELSE in
+the movies/music library, leave it EXACTLY where it already is and
+skip the download entirely, rather than creating a second copy in the
+new folder. Whichever category downloaded it FIRST -- Series or
+otherwise -- becomes the permanent home automatically, with no
+movement possible, so no ping-pong risk exists structurally (same
+guarantee JW's own deterministic pub-code category mapping already
+gives EPUBs, just achieved differently since video/audio have no
+single stable "one true category" per item the way a publication's pub
+code does).
+
+New shared find_existing_file_elsewhere(filename, dest_dir, search_root)
+generalizes the EPUB-only find_existing_book_elsewhere() to take an
+explicit search root, so the same logic now covers video (JW_PLUGIN.
+find_movies_dir()) and audio (JW_PLUGIN.find_music_dir()) libraries too,
+not just books; the EPUB-specific function is now a thin wrapper over
+it. Wired into all three audio/video download paths: single-item
+video, single-item audio, and Download All's batch loop. Fixed a
+message-clobbering bug caught while wiring this in: the existing
+"downloaded successfully" status text was being applied unconditionally
+whenever ok=True, which would have silently overwritten the new,
+more-accurate "already downloaded (found in a different category)"
+message with the generic "downloaded, exit and open ROM Collection..."
+text -- now only applied for an actual fresh download.
+
+Verified live: simulated the exact real scenario (a video downloaded
+via "Series" first, then found again via a different overlapping
+category, then Series again) -- confirmed the file stays in Series/
+the entire time across all three attempts, with zero duplication and
+zero movement.
+
+
+category will it move it from one category to the other over and
+over?"): confirmed live, yes it would have. A book can legitimately
+belong to MULTIPLE real Gutenberg bookshelves at once (e.g. Sherlock
+Holmes is filed under both "Crime, Thrillers & Mystery" and "Short
+Stories") -- browsing it via a different real category than the one it
+was already organized under used to migrate it AGAIN every time,
+ping-ponging the file back and forth depending on whichever category
+was most recently browsed and downloaded from. Verified the exact
+scenario live: Mystery -> Short Stories -> Mystery moved the file twice
+before this fix, zero times after.
+
+Fixed by only allowing migration to pull a book OUT of genuine limbo
+(sitting flat, directly at LIBRARY_DIR's own root -- checked via
+os.path.dirname() on the stray's absolute path) into its first real
+category; once a book already has ANY category folder at all, a later
+download from a different valid category now reports "already in
+Library" and leaves it exactly where it is, rather than moving it.
+Same reasoning CATEGORIES_NO_FOLDER already applies one level up (a
+mixed view isn't a stable category to file under) now also applies to
+an ALREADY-CHOSEN real folder -- it's equally not something a later
+browse should get to override.
+
+
+issues" -- Kaleb's own request to re-audit): start_download_all()
+already correctly captured `items` synchronously in the main thread,
+BEFORE threading.Thread(...).start() ever ran, specifically so
+self.dl_items changing later (e.g. the person navigating to a
+different category) couldn't affect an already-running batch. But
+music_dir (the destination folder) was computed INSIDE the background
+thread instead, AFTER .start() had already returned control to the
+main thread -- a real, if narrow, race: nothing blocks navigating away
+from the browse screen while a batch download is running, so if the
+OS scheduler delayed the new thread's first instruction long enough
+for the person to pick a different category, every file in the batch
+would silently land in the WRONG category's folder, with no visible
+error. Fixed by capturing music_dir synchronously in the main thread
+too, right alongside items, matching the pattern items already used
+correctly. Verified live: the destination folder is now locked in
+before any navigation could occur, regardless of subsequent changes to
+self._current_audio_source.
+
+Also checked, all came back clean: no equivalent race exists in
+start_download() (single-item) or the EPUB download closure -- both
+already do all their category/destination resolution synchronously
+inside the SAME background-thread function that immediately uses the
+result, with no gap for external state to change in between (unlike
+Download All's now-fixed two-step capture). Gutenberg's filename
+sanitizer (_safe_filename(), a separate implementation from jw_fetch.py's
+sanitize_folder_name()) strips unsafe characters in one pass rather
+than a strip-then-convert sequence, so it was never at risk of the
+same curly-quote reintroduction bug fixed earlier this session; its
+120-character cap is also applied before the .epub extension is
+appended, never truncating into the extension itself. Checked real
+JW audio category data (489 items across the 4 largest categories) for
+genuine filename collisions between distinct tracks -- zero found.
+The theoretical risk of two DIFFERENT Gutenberg books sharing a title
+(and therefore a filename, which the stray-file migration feature
+matches on) is real but was already explicitly disclosed in that
+feature's own code comments as an accepted, low-probability trade-off
+-- checked a real 25-book sample for a common generic search term
+("Poems") and found zero collisions, consistent with that assessment.
+
+
+Also checked, all came back clean: start_download_all()'s guard
+against a concurrent single-download is already bidirectional (checked
+both directions, not just one); no-player-found in play_audio_file()
+fails fast on the first track rather than looping through failures;
+skip-backward at the first track and skip-forward at the last track in
+both audio and video queues both end cleanly with no crash or index
+error; an exception inside a resolve_source callback is still safely
+cleaned up by the existing finally block (confirmed live) even though
+the real _resolve_media_source() implementation already can't raise in
+practice (it catches everything internally).
+
+
+UI issues like we had in the past?"): draw_library_delete_folder()'s
+row rendering had NO width truncation at all -- unlike every other
+similar list screen, which either has short, fixed labels (safe
+without it) or explicitly calls _fit_text(). This screen is neither:
+folder names are real, unbounded text (a person's own typed name, or a
+long category name like "Sing Out Joyfully to Jehovah-Instrumental",
+42+ characters) PLUS a 30-character "press A again to confirm" suffix
+appended when armed -- confirmed this combination would run well past
+the screen edge, especially at a larger Font Size setting. Fixed with
+the same _fit_text() ellipsis convention used everywhere else dynamic-
+length text meets a fixed-width row. Also re-verified two related
+candidates came back clean: the "[OFFLINE -- downloaded only]" title
+suffix inherits an existing, well-reasoned wrap fix (v26.07.12.09) that
+guarantees text is never silently dropped even in a worst-case-long
+title; the Library's "By Folder" sort-mode suffix was already correctly
+capped with _fit_text() when it was first written this session.
+
+
+Kaleb's request: "anything we missed based on past bugs we fixed
+historically, check again"): systematically re-checked every bug class
+fixed this session for un-fixed siblings elsewhere. Found one real,
+more consequential gap the v26.07.23.14 caffeine-file fix didn't cover:
+idle_sleep/idle_display themselves (/opt/muos/config/settings/power/)
+are REAL PERSISTENT config files, unlike _CAFFEINE_PATH's /run/muos
+(tmpfs, cleared on reboot) -- if PicoReader crashes or loses power
+while either is forced to "0" during any playback session, they stay
+stuck at "0" system-wide, surviving even a full reboot, with nothing
+to self-heal them. Worse than the caffeine bug: that one degraded to
+"suspend blocked" (annoying, recoverable by any clean playback+quit);
+this one silently discards the person's actual screen-timeout settings
+with no way back except re-entering old numbers by hand in muOS's own
+Settings, if they even remember what they were.
+
+Fix: suppress_idle_display() now writes the ORIGINAL values to a small
+backup file (native_video.set_idle_backup_path(), pointed at PicoReader's
+own persistent DATA_DIR by main.py at startup) before ever touching the
+live config; restore_idle_display() deletes it on every clean restore.
+native_video.check_and_recover_stale_idle_backup(), called once at app
+startup (right after DATA_DIR is guaranteed to exist, before any
+playback this session) -- finding a leftover backup file is proof the
+last session ended abnormally mid-suppression, and its contents are
+the real values to restore, self-healing even across a reboot. A
+corrupt/unreadable backup (e.g. the write itself got cut off mid-crash)
+is handled safely too -- can't recover from it, but doesn't leave it
+sitting there forever either.
+
+Verified live end-to-end: simulated a real crash (suppress without
+restore) with real original values (120/90), confirmed the next
+session's startup check correctly recovers them and cleans up the
+backup file; confirmed a normal clean playback session still writes
+and cleans up the backup correctly with nothing left behind; confirmed
+a deliberately corrupted backup file doesn't crash the startup check.
+
+Everything else re-checked against this session's other fixed bug
+patterns (sanitizer ordering, exact-vs-fuzzy text matching, folder-
+naming consistency across code paths, unguarded background-thread
+operations, popup-menu auto-close assumptions) came back clean -- no
+other unfixed siblings found.
+
+
+(v26.07.23.15, Kaleb's own question: "would [a future reorganize
+feature] hurt anything?" -- scoped down, per his explicit instruction,
+to fixing this for the per-download stray-file migration that already
+exists, NOT building the bulk reorganize feature yet):
+
+Found by actually reading how each piece of state is keyed, not
+assuming: Pinned/Finished are keyed by "relpath" (path relative to
+LIBRARY_DIR) -- scan_library()'s own stale-cleanup ACTIVELY DELETES any
+entry whose relpath no longer matches a real book on its very next run
+(which happens constantly), so moving a pinned book without also
+updating its pin entry would silently lose the pin for good. Bookmarks/
+reading position are keyed by the FULL file path -- confirmed NOT
+auto-purged (they're the person's own data, per orphaned_bookmark_
+book_paths()'s own docstring), but would become invisible/unreachable
+at the old path with nothing pointing at the new one -- reopening a
+moved book would show no resume point at all, indistinguishable from
+having never read it.
+
+New main.migrate_book_state(old_path, new_path), called right after
+find_existing_book_elsewhere()'s shutil.move() succeeds: renames the
+pin/finished set entries (relpath) and the bookmarks.json entry (full
+path) to the new location, and cleans up the old book_id-keyed image/
+anchor/wrap cache files (they'd just be orphaned dead weight under the
+old hash anyway -- the new path regenerates its own cache fresh on
+next open, a harmless one-time re-decode, not data loss). Wrapped in
+its own try/except -- a failure here must never undo the successful
+file move itself; worst case on failure is the old state stays
+orphaned exactly as it would have before this fix existed, not a new
+regression.
+
+Verified live with realistic pre-existing state (a pinned book with
+real bookmark/reading-progress data and populated caches): pin, exact
+bookmark content (anchor position), and old cache cleanup all confirmed
+correct after migration; also verified a book with NO existing state
+migrates as a clean no-op with no exception.
+
+
+
+(v26.07.23.08-.11, Kaleb's requests: "New Issues, Popular, Latest,
+Random should show category markers", "if it sees duplicate copies...
+have it migrate them", "check for bugs across menu navigation, folder
+naming, creation, deletion... resilience for error handling"):
+
+New optional plugin function resolve_item_category(item), called by
+start_download()'s EPUB branch ONLY when the open category is in
+CATEGORIES_NO_FOLDER (the mixed views that have no single real genre
+of their own): jw_fetch.py's version is a pure local dict lookup
+(item["_pub"] against the same STATIC_PUBLICATIONS/PERIODICALS
+category columns used elsewhere -- e.g. a Watchtower "New Issues" hit
+now correctly files under "Watchtower--Study Edition"); gutenberg_
+fetch.py's version fetches the book's own detail page (a real extra
+network round-trip, NOT the zero-cost reuse the adult-content filter
+gets -- accepted trade-off for simplicity) and reads its "In Category:"
+bookshelf tags.
+
+BUG FIX (v26.07.23.09, Kaleb's own catch: "wouldn't Sherlock Holmes be
+Mystery not Short Stories?"): the first version of gutenberg_fetch.py's
+resolver just took the FIRST "In Category:" tag in feed order --
+Sherlock Holmes' first tag happens to be "Short Stories" (a FORMAT),
+even though "Crime, Thrillers and Mystery" (the real genre) is right
+there as a second tag. Fixed by filtering out known format-only
+categories (short stories, poetry, plays, essays, letters, etc.) and
+using the first remaining genre tag instead -- confirmed live across
+5 real books.
+
+BUG FIX (v26.07.23.11, found immediately after .09/.10 during migration
+testing): even after picking the right genre tag, returning it
+VERBATIM caused real folder fragmentation -- browsing the real "Crime,
+Thrillers & Mystery" category (this app's own wording, with "&")
+creates one folder, but the same book auto-resolved from a mixed view
+returned Gutenberg's raw "Crime, Thrillers and Mystery" ("and" instead
+of "&") and created a SECOND folder for the same genre -- the exact
+kind of duplicate-location problem the migration feature below is
+supposed to prevent. Fixed with fuzzy token-overlap matching back to
+this app's own CATEGORIES list (exact-string matching tried first was
+too brittle against Gutenberg's real wording -- "Children & Young
+Adult Reading" vs this app's "Children & Young Adult", "Science-
+Fiction" vs "Science Fiction") -- confirmed live this now reconciles
+both code paths onto one consistent folder name every time.
+
+Stray-file migration (main.py's find_existing_book_elsewhere(), new
+v26.07.23.08): before downloading anything, checks whether a file with
+the same name already exists SOMEWHERE ELSE in the library (e.g. a
+flat copy from before category folders existed, or a copy from an
+earlier un-categorized mixed-view download) and moves it into the
+resolved destination instead of re-downloading -- free (no network),
+instant, cleans up the stray. Basename-only matching, not content
+hash -- both plugins derive filenames deterministically from stable
+identity, so this is safe in practice without the I/O cost of hashing
+every file in the library on every download.
+
+Bug audit findings (v26.07.23.11): (1) start_download_all()'s
+os.makedirs() was the ONLY one of four in the app not wrapped in a
+try/except -- a real failure (permission denied, disk full, invalid
+path) would die silently inside its background thread and leave
+_dl_all_running stuck True forever, permanently disabling both Download
+All AND single-item Download (which also checks that flag) until app
+restart. Fixed with an explicit try/except that releases the flag and
+reports a real error; verified live by forcing a genuine OSError.
+(2) "New Folder" always said "Created folder X" even when os.makedirs's
+exist_ok=True silently did nothing because the folder already existed
+-- now distinguishes "already exists" from "created". (3) Menu
+navigation, hidden-row skipping, and Delete Folder's index-clamping
+after a deletion were all audited against the two new menu items and
+found already safe (string-based dispatch throughout, no hardcoded
+indices assumed list length/order).
+
+
+(v26.07.23.05-.07, Kaleb's request: "have the library manager check all
+sub folders", "we would need to save epubs into those sub categories
+too", "should also work when person not using JW.org and decided to
+make their own folders", "implement a create folder feature and delete
+folder option"):
+
+scan_library() now os.walk()s LIBRARY_DIR recursively instead of a flat
+os.listdir() -- finds EPUBs in ANY subfolder, whether the app created
+it (category downloads, see below) or a person made it manually in the
+Books ROM folder outside the app entirely; both are treated identically
+since the walk doesn't care how a folder got there. Identity key for
+the on-disk cache/pinned/finished sets switched from bare filename to
+"relpath" (path relative to LIBRARY_DIR) -- bare filenames alone would
+collide across different subfolders (two unrelated books happening to
+share a name). A root-level book (no subfolder) has relpath==filename,
+identical to before this change, so pre-existing pin/finished/cache
+entries for books that stay at the root are completely unaffected.
+Updated every call site that used to compare on book["filename"] for
+identity (toggle_pin/toggle_finished, _apply_library_view's Finished
+filter, finished_books_present/clear_finished_book_caches, the Pinned
+count, the Continue Reading marker, Mark Finished/Unfinished's status
+check) -- book["filename"] itself is kept as the bare basename for any
+future display use, just no longer used for identity anywhere.
+
+New "By Folder" sort mode (LIBRARY_SORT_MODES) groups books by their
+subfolder alphabetically (root-level books sort last), shown as a
+lightweight " -- Folder Name" suffix next to the title -- same
+approach author/last_read already use, deliberately NOT a real header
+row (would need touching this screen's fragile windowed-scroll/row-
+height math for what's meant to be a simple at-a-glance grouping cue).
+
+Downloaded EPUBs (both jw_fetch.py and gutenberg_fetch.py) now save
+into LIBRARY_DIR/<Category Name>/ instead of flat at the root, same
+pattern as the JW Audio/Videos category subfolders (v26.07.23.03) --
+start_download()'s generic EPUB branch checks self.dl_category against
+the active plugin's new optional CATEGORIES_NO_FOLDER list (JW's "New
+Issues" RSS feed, Gutenberg's Popular/Latest/Random views) before using
+it as a folder name; none of those are a single stable category (they
+mix genres/pub-types together), so books from them stay flat at the
+root, same "no single stable category" reasoning already used for
+Search Audio/Search Videos. Folder names reuse jw_fetch.py's
+sanitize_folder_name() (shared utility, not duplicated in
+gutenberg_fetch.py). Category names themselves were already using real
+JW.org terminology (Bibles, Books & Brochures, Tracts, Watchtower--
+Study/Public Edition, Awake!, Meeting Workbooks -- confirmed against
+wol.jw.org's own publication-type headings and jw.org's own Watchtower
+Study/Public Edition naming); "Books & Brochures" is a deliberate merge
+of jw.org's two separate real categories (Books, Brochures) since the
+app doesn't track that distinction per-publication and splitting it
+would risk misclassifying rather than a verified fix -- flagged as a
+known scope limit, not fixed by guessing.
+
+New "New Folder" / "Delete Folder" actions in the Library popup menu
+only (per Kaleb's explicit scope -- not duplicated anywhere else).
+New Folder opens the existing SCREEN_TEXT_ENTRY keyboard + os.makedirs.
+Delete Folder is a simple list picker (list_library_folders(), top-
+level LIBRARY_DIR folders only -- app-created or a person's own) with
+the same two-press-confirm safety as "Delete Book"; only deletes a
+folder that's genuinely empty (checked live at press time, not
+cached) -- a non-empty folder gets a clear status message instead of
+being force-deleted, no bulk-move-books flow, kept deliberately simple
+per Kaleb's own framing.
+
+Keyboard auto-capitalizes each word as you type, but ONLY for New
+Folder (Kaleb's own follow-up concern: always doing this globally
+could cause search-matching problems) -- new App.te_autocap flag
+(default False), only set True by New Folder's own open_text_entry()
+call; the shared char-append handler only lowercases a typed letter
+(unless it's the first character or follows a space) when that flag is
+set. Every other caller of this same keyboard -- Search Audio/Videos/
+Gutenberg, pub code entry, theme naming -- passes nothing and is
+completely unaffected, typing exactly whatever case is pressed, same
+as before this existed. Grid itself still only shows uppercase glyphs
+(no shift/caps key, kept deliberately simple) -- the inserted character
+is what changes, not the visual keyboard.
+
+BUG FIX (v26.07.23.04, found during a "make sure real JW.org category
+names are followed" audit, jw_fetch.py): _sanitize_video_filename()'s
+curly-quote-to-straight-quote conversion ran AFTER its bad_chars strip
+pass -- so a curly double quote (common in real JW.org titles/category
+names, e.g. the two "Sing Out Joyfully" entries) got converted into a
+literal straight '"' character in the FINAL output, even though '"' is
+explicitly in bad_chars because it's one of the characters FAT32/exFAT
+(what SD cards actually use) forbid in a filename. Confirmed live this
+could have produced a category subfolder name muOS's own SD card
+filesystem might refuse to create. Fixed by running all typographic
+normalization (dashes, curly quotes) BEFORE the bad_chars strip, so any
+straight quote introduced by that conversion still gets caught by the
+same strip everything else goes through. This function is also used
+for every downloaded song/video's own filename, not just category
+folder names, so the fix protects both.
+
+Also (same audit): the 4 new "Sing Out Joyfully"/"Sing to Jehovah"/
+"Children's Songs" AUDIO_SOURCES labels (added v26.07.23.01) and 4
+PRE-EXISTING VIDEO_SOURCES subcategory labels ("Become Jehovah's
+Friend", "Love People", "Pure Worship", the video "Sing Out Joyfully"
+entry) were ASCII approximations (straight quotes + " -- ") of the
+real jw.org names. Replaced with the byte-for-byte real strings
+(confirmed live against the mediator API's own "name" field for each)
+-- real em dash (\u2014), real curly quotes (\u201c/\u201d/\u2019) where
+jw.org actually uses them. Confirmed the bundled DejaVu Sans Condensed
+font has real glyphs for all of these (non-zero width), so they render
+correctly on-screen rather than falling back to a missing-glyph box.
+This matters beyond just organization -- with per-category download
+subfolders (v26.07.23.03) now writing to disk, an inexact label was no
+longer just a cosmetic difference from jw.org's own naming, it was the
+literal folder name a person would see browsing ROMS/Music directly
+outside the app.
+
+"The Good News According to Jesus--Soundtrack 1/2/3" and "Commit Your
+Way to Jehovah--Soundtrack", also visible in Kaleb's screenshots, are
+NOT categories in the real Audio tree (confirmed live: exactly 7
+subcategories, none titled "Soundtrack") -- they're standalone
+single-track releases with their own pub codes. Out of scope for
+Download All; would need individual AUDIO_SOURCES entries instead if
+Kaleb wants them added later.
 
 MEDIA/BOOKS DIRS NOW CHECK /mnt/union/ROMS FIRST (v26.07.18.02, Kaleb's
 report). find_books_dir() (main.py), find_movies_dir()/find_music_dir()
@@ -2620,6 +3649,12 @@ import struct
 import array
 import hashlib
 import glob
+import shutil  # v26.07.23.08: used by find_existing_book_elsewhere()'s
+                # migration -- shutil.move() instead of os.rename() since
+                # rename() fails across filesystems/mount points (e.g. a
+                # stray copy on /mnt/sdcard being migrated into a folder
+                # under /mnt/union), which os.rename() can't handle but
+                # shutil.move() falls back to copy+delete for automatically.
 import queue
 import itertools
 import random
@@ -3021,6 +4056,28 @@ except Exception:
     _boot_log(traceback.format_exc())
     _boot_log("--- END ---\n")
     sys.exit(1)
+
+# v26.07.23.16 (Kaleb's request: "anything we missed based on past bugs
+# we fixed historically" -- same lesson as the v26.07.23.14 caffeine-
+# file crash-resilience fix, applied to something more consequential
+# that fix didn't cover: idle_sleep/idle_display themselves are real
+# PERSISTENT muOS config files, not tmpfs like the caffeine file, so a
+# crash mid-playback could leave the person's REAL screen-timeout/sleep
+# settings stuck at "0" system-wide, surviving even a reboot, with
+# nothing to self-heal them). Must happen here, at import time, BEFORE
+# any playback this session -- see native_video.
+# check_and_recover_stale_idle_backup()'s own docstring for the full
+# mechanism (a small backup file written before every suppress, cleared
+# on every clean restore; finding one here means last session ended
+# abnormally mid-suppression).
+if native_video is not None:
+    try:
+        native_video.set_idle_backup_path(os.path.join(DATA_DIR, "idle_backup.json"))
+        if native_video.check_and_recover_stale_idle_backup():
+            _boot_log("Recovered stale idle_sleep/idle_display from a prior "
+                      "session that didn't shut down cleanly.\n")
+    except Exception:
+        pass  # best-effort -- must never block startup over this
 
 # ============================================================
 # SDL2 ctypes bindings (minimal, matches Pico8FavsSorter conventions)
@@ -5147,14 +6204,16 @@ def delete_book_cache(book_id_value):
 
 
 def finished_books_present():
-    """Finished-flagged filenames that still have a matching book on disk
-    (mirrors the by_filename lookup clear_finished_book_caches() uses, so
+    """Finished-flagged relpaths that still have a matching book on disk
+    (mirrors the by_relpath lookup clear_finished_book_caches() uses, so
     the Storage screen's displayed count always matches what the action
-    would actually process)."""
+    would actually process). v26.07.23.05: was bare filename -- switched
+    to relpath alongside the rest of the pinned/finished identity fix,
+    now that the library scans subfolders recursively."""
     finished = load_finished()
     if not finished:
         return []
-    present = {b["filename"] for b in scan_library()}
+    present = {b["relpath"] for b in scan_library()}
     return [f for f in finished if f in present]
 
 
@@ -5164,14 +6223,14 @@ def clear_finished_book_caches():
     Finished flag itself -- same disposable-cache contract as Clear Image
     Cache. A finished book just re-lays-out/re-decodes from scratch if
     ever reopened. Returns (books_affected, bytes_freed)."""
-    filenames = finished_books_present()
-    if not filenames:
+    relpaths = finished_books_present()
+    if not relpaths:
         return 0, 0
-    by_filename = {b["filename"]: b for b in scan_library()}
+    by_relpath = {b["relpath"]: b for b in scan_library()}
     freed = 0
     count = 0
-    for fname in filenames:
-        book = by_filename.get(fname)
+    for rp in relpaths:
+        book = by_relpath.get(rp)
         if book is None:
             continue
         bid = book_id(book["path"])
@@ -6346,17 +7405,167 @@ def _save_library_cache(cache):
         pass
 
 
+def list_library_folders():
+    """v26.07.23.07 (Kaleb's request: Create/Delete Folder in the
+    Library popup menu). Returns sorted top-level folder names directly
+    under LIBRARY_DIR -- deliberately only ONE level deep, matching the
+    only kind of subfolder this app itself ever creates (category
+    downloads, see start_download()'s dest_dir logic) and keeping the
+    Delete Folder picker simple; a person's own manually-made folders
+    (per the "works when person not using JW.org" requirement) are
+    almost always flat too. Nested sub-subfolders would still be found
+    fine by scan_library()'s recursive walk for reading/sorting -- they
+    just wouldn't get their own row in this specific picker."""
+    if not os.path.isdir(LIBRARY_DIR):
+        return []
+    try:
+        return sorted(
+            name for name in os.listdir(LIBRARY_DIR)
+            if os.path.isdir(os.path.join(LIBRARY_DIR, name))
+        )
+    except OSError:
+        return []
+
+
+def find_existing_file_elsewhere(filename, dest_dir, search_root):
+    """v26.07.23.08/.21 (Kaleb's request, extended: "series section
+    files can end up in other categories... make series the source of
+    truth to reduce ping-ponging"). Generalized version of the original
+    EPUB-only find_existing_book_elsewhere() -- takes an explicit
+    search_root instead of hardcoding LIBRARY_DIR, so the SAME basename-
+    matching logic can also cover video (search_root=find_movies_dir())
+    and audio (search_root=find_music_dir()) libraries, not just books.
+    Recursively searches search_root for a file with this exact
+    basename that ISN'T already at dest_dir/filename. Returns the first
+    match's full path, or None if there isn't one.
+
+    Deliberately basename-only matching (not content hash) -- see this
+    function's own original docstring history for why that's a safe
+    trade-off given both plugins' deterministic filename conventions."""
+    target = os.path.join(dest_dir, filename)
+    if not os.path.isdir(search_root):
+        return None
+    for dirpath, dirnames, filenames in os.walk(search_root):
+        if filename in filenames:
+            found = os.path.join(dirpath, filename)
+            if os.path.abspath(found) != os.path.abspath(target):
+                return found
+    return None
+
+
+def find_existing_book_elsewhere(filename, dest_dir):
+    """Thin EPUB-specific wrapper around find_existing_file_elsewhere(),
+    kept so existing call sites don't need to change. See that
+    function's docstring for the full reasoning."""
+    return find_existing_file_elsewhere(filename, dest_dir, LIBRARY_DIR)
+
+
+def migrate_book_state(old_path, new_path):
+    """v26.07.23.15 (Kaleb's request, following his own question "would
+    that hurt anything?" about a potential future full-library reorganize
+    feature -- scoped down to JUST the per-download stray-file migration
+    that already exists, not a new bulk feature): when find_existing_
+    book_elsewhere() finds a stray copy and moves it into its resolved
+    category folder, this carries the book's OWN existing state along
+    with the file, instead of leaving it behind to rot.
+
+    Three separate things needed fixing, found by actually reading how
+    each is keyed (not assumed):
+      - Pinned/Finished: keyed by "relpath" (path relative to LIBRARY_
+        DIR) -- scan_library()'s own stale-cleanup ACTIVELY DELETES any
+        pin/finished entry whose relpath no longer matches a real book
+        on its very next run, which happens constantly. Without this
+        fix, moving a pinned book would silently lose the pin for good
+        the moment the library next refreshed.
+      - Bookmarks/reading position: keyed by the FULL file path (not
+        relpath) -- confirmed NOT auto-purged (bookmarks are the
+        person's own data, per orphaned_bookmark_book_paths()'s own
+        docstring), but would still become invisible/unreachable at
+        the OLD path with nothing pointing at the NEW one -- reopening
+        the moved book would show no resume point at all.
+      - Image/anchor/wrap render caches: keyed by book_id(path), a hash
+        of the full path -- becomes orphaned dead weight under the OLD
+        hash (nothing will ever reference it again) while the NEW path
+        regenerates a fresh cache from scratch on next open anyway (a
+        harmless one-time re-decode, not data loss) -- so rather than
+        leaving the old entries as a permanent disk leak, they're
+        deleted here, same cleanup pattern scan_library()'s own stale-
+        purge already uses.
+
+    Called AFTER a successful shutil.move() -- old_path is where the
+    file WAS, new_path is where it NOW is. Safe to call even if the
+    book had no pin/finished/bookmark/cache state at all (every step is
+    a no-op in that case)."""
+    old_relpath = os.path.relpath(old_path, LIBRARY_DIR)
+    new_relpath = os.path.relpath(new_path, LIBRARY_DIR)
+
+    pinned = load_pinned()
+    if old_relpath in pinned:
+        pinned.discard(old_relpath)
+        pinned.add(new_relpath)
+        save_pinned(pinned)
+
+    finished = load_finished()
+    if old_relpath in finished:
+        finished.discard(old_relpath)
+        finished.add(new_relpath)
+        save_finished(finished)
+
+    bookmarks = load_bookmarks()
+    if old_path in bookmarks:
+        bookmarks[new_path] = bookmarks.pop(old_path)
+        save_bookmarks(bookmarks)
+
+    old_id = book_id(old_path)
+    for pattern in (
+        os.path.join(IMG_CACHE_DIR, f"{old_id}__*"),
+        os.path.join(ANCHOR_CACHE_DIR, f"{old_id}.json"),
+        os.path.join(WRAP_CACHE_DIR, f"{old_id}__*"),
+    ):
+        for path in glob.glob(pattern):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def scan_library():
+    """v26.07.23.05 (Kaleb's request: "have the library manager check
+    all sub folders in Book Reader roms folder"): now walks LIBRARY_DIR
+    recursively (os.walk) instead of a flat os.listdir(), so EPUBs in
+    subfolders -- e.g. LIBRARY_DIR/Watchtower -- Study Edition/... --
+    are found too, same spirit as the per-category subfolders JW
+    Audio/Videos already got (v26.07.23.03).
+
+    Identity key changed from bare filename to "relpath" (path relative
+    to LIBRARY_DIR, e.g. "Watchtower -- Study Edition/w202001.epub")
+    for the on-disk cache/pinned/finished sets -- bare filenames alone
+    would collide across different subfolders (two different books
+    both happening to be named the same). A root-level book (no
+    subfolder) has relpath == filename, identical to before this
+    change, so existing pin/finished/cache entries for books that stay
+    at the root are unaffected -- only newly-foldered books get fresh
+    entries. Each book dict also carries "folder" (the subfolder path,
+    "" for root-level) for the new folder/category sort mode and
+    grouping display.
+    """
     books = []
     if not os.path.isdir(LIBRARY_DIR):
         return books
     cache = _load_library_cache()
     cache_dirty = False
 
-    for fname in sorted(os.listdir(LIBRARY_DIR)):
-        if not fname.lower().endswith(".epub"):
-            continue
-        path = os.path.join(LIBRARY_DIR, fname)
+    found = []
+    for dirpath, dirnames, filenames in os.walk(LIBRARY_DIR):
+        dirnames.sort()
+        for fname in sorted(filenames):
+            if not fname.lower().endswith(".epub"):
+                continue
+            full_path = os.path.join(dirpath, fname)
+            relpath = os.path.relpath(full_path, LIBRARY_DIR)
+            found.append((full_path, relpath, fname))
+
+    for path, relpath, fname in found:
         try:
             stat = os.stat(path)
             fingerprint = f"{stat.st_size}:{stat.st_mtime}"
@@ -6364,7 +7573,7 @@ def scan_library():
             fingerprint = None
             stat = None
 
-        cached_entry = cache.get(fname)
+        cached_entry = cache.get(relpath)
         # first_seen is deliberately kept stable across re-scans/edits (it's
         # "when this book first appeared in the library", not tied to the
         # fingerprint) -- otherwise "recently added" would reorder every
@@ -6389,14 +7598,16 @@ def scan_library():
                     author = re.sub(r"<[^>]+>", "", m2.group(1)).strip()
             except Exception as e:
                 _boot_log(f"library scan failed for {fname}: {e}\n")
-            cache[fname] = {
+            cache[relpath] = {
                 "fingerprint": fingerprint, "title": title, "author": author,
                 "first_seen": first_seen,
             }
             cache_dirty = True
 
+        folder = os.path.dirname(relpath)  # "" for root-level books
         books.append({
             "path": path, "title": title, "filename": fname,
+            "relpath": relpath, "folder": folder,
             "author": author, "first_seen": first_seen,
         })
 
@@ -6404,12 +7615,12 @@ def scan_library():
     # orphaned caches too. Without this, deleting an epub left its image
     # cache, anchor cache, and pin entry sitting around forever with
     # nothing that could ever reference them again.
-    current_files = {b["filename"] for b in books}
+    current_files = {b["relpath"] for b in books}
     stale = [k for k in cache if k not in current_files]
-    for fname in stale:
-        del cache[fname]
+    for relpath in stale:
+        del cache[relpath]
         cache_dirty = True
-        stale_id = book_id(os.path.join(LIBRARY_DIR, fname))
+        stale_id = book_id(os.path.join(LIBRARY_DIR, relpath))
         for pattern in (
             os.path.join(IMG_CACHE_DIR, f"{stale_id}__*"),
             os.path.join(ANCHOR_CACHE_DIR, f"{stale_id}.json"),
@@ -6421,12 +7632,12 @@ def scan_library():
                 except OSError:
                     pass
         pinned = load_pinned()
-        if fname in pinned:
-            pinned.discard(fname)
+        if relpath in pinned:
+            pinned.discard(relpath)
             save_pinned(pinned)
         finished = load_finished()
-        if fname in finished:
-            finished.discard(fname)
+        if relpath in finished:
+            finished.discard(relpath)
             save_finished(finished)
 
     if cache_dirty:
@@ -6532,11 +7743,11 @@ def save_finished(finished_set):
 LIBRARY_FILTER_MODES = ["all", "unfinished", "finished"]
 LIBRARY_FILTER_LABELS = {"all": "All", "unfinished": "Unfinished", "finished": "Finished"}
 
-LIBRARY_SORT_MODES = ["title", "author", "last_read", "recent", "filename"]
+LIBRARY_SORT_MODES = ["title", "author", "last_read", "recent", "filename", "folder"]
 LIBRARY_SORT_LABELS = {
     "title": "Title A-Z", "author": "Author A-Z",
     "last_read": "Last Read", "recent": "Recently Added",
-    "filename": "By Publication",
+    "filename": "By Publication", "folder": "By Folder",
 }
 
 
@@ -6594,10 +7805,21 @@ def sort_library(books, mode, pinned):
             return -(b.get("first_seen") or 0)  # newest first
         if mode == "filename":
             return (b.get("filename") or "").lower()
+        if mode == "folder":
+            # v26.07.23.05 (Kaleb's request: a sort mode that groups by
+            # subfolder -- works for ANY folder structure on disk,
+            # whether the app created it (category downloads) or the
+            # person made their own folders manually in the Books ROM
+            # folder outside the app; scan_library()'s recursive walk
+            # doesn't care which). Root-level books ("" folder) sort
+            # after every real folder, not before -- "\uffff" forces
+            # that regardless of what real folder names happen to be.
+            folder = b.get("folder") or ""
+            return (folder.lower() or "\uffff", (b.get("title") or "").lower())
         return (b.get("title") or "").lower()
 
-    pinned_books = sorted([b for b in books if b["filename"] in pinned], key=sort_key)
-    other_books = sorted([b for b in books if b["filename"] not in pinned], key=sort_key)
+    pinned_books = sorted([b for b in books if b["relpath"] in pinned], key=sort_key)
+    other_books = sorted([b for b in books if b["relpath"] not in pinned], key=sort_key)
     return pinned_books + other_books
 
 
@@ -6681,6 +7903,23 @@ SCREEN_DOWNLOAD_BROWSE_MENU = "download_browse_menu"  # v26.07.21.42
                         # with pop up menu"). Was: X on SCREEN_DOWNLOAD_
                         # BROWSE opened the static Search/Pub-Code-only
                         # Help overlay above -- stale/incomplete once
+SCREEN_DOWNLOAD_QUICK_MENU = "download_quick_menu"  # v26.07.24.04
+                        # (Kaleb's request: "Return to Library and Exit
+                        # App on all the Gutenberg and JW popup menus...
+                        # especially JW.py because there are a lot of
+                        # sub categories, to just exit the app or get
+                        # back to library I have to press B a lot").
+                        # A minimal two-item popup (Return to Library /
+                        # Exit App) reachable via START on all six
+                        # source/category picker screens (SOURCES,
+                        # CATEGORIES, VIDEO_SOURCES, VIDEO_SERIES,
+                        # AUDIO_SOURCES, AUDIO_BOOKS) -- START confirmed
+                        # free on all six. SCREEN_DOWNLOAD_BROWSE already
+                        # has its own real popup (SCREEN_DOWNLOAD_BROWSE_
+                        # MENU, opened via X) -- that one gets the same
+                        # two items added directly into its own existing
+                        # item list instead of this separate screen, see
+                        # _download_browse_menu_items()'s own comment.
                         # this screen grew Play/Play All/Shuffle All/
                         # Download. Now X opens a real popup menu (same
                         # visual pattern as draw_menu()) listing whatever
@@ -6693,6 +7932,18 @@ SCREEN_LIBRARY_MENU = "library_menu"          # X on Library (was START
                                                # before v26.07.12.05) --
                                                # sort shortcuts + Download
                                                # + Storage (v0.1.29)
+SCREEN_LIBRARY_DELETE_FOLDER = "library_delete_folder"  # v26.07.23.07:
+                                               # simple picker for "Delete
+                                               # Folder" (Library popup
+                                               # menu only, per Kaleb's
+                                               # explicit scope) -- lists
+                                               # every top-level folder
+                                               # under LIBRARY_DIR (app-
+                                               # created category folders
+                                               # AND anything a person
+                                               # made manually), same
+                                               # two-press-confirm safety
+                                               # as "Delete Book".
 SCREEN_IMAGE_VIEW = "image_view"              # v0.1.124: fullscreen image
                                                # maximize mode -- A on a
                                                # selected reader image.
@@ -6779,7 +8030,7 @@ AUDIO_SOURCE_ITEMS.append("Back")
 # Finished/Unfinished stays menu-only; that decision wasn't revisited.
 LIBRARY_MENU_ITEMS = ["Continue Reading", "Mark Finished/Unfinished",
                        "Filter: Cycle", "Clear All Finished",
-                       "Themes...",
+                       "Themes...", "New Folder", "Delete Folder",
                        "Download Books", "Settings", "Delete Book", "Back"]
 
 # v26.07.15.24 (Kaleb's request: "don't overclutter the popup menu"):
@@ -6958,6 +8209,13 @@ class App:
                                                        # or Library menu,
                                                        # whichever opened it
         self.lib_menu_index = 0  # selection on SCREEN_LIBRARY_MENU
+        # v26.07.23.07: state for the "Delete Folder" picker (Library
+        # popup menu only). lib_delete_folder_index is the selection on
+        # SCREEN_LIBRARY_DELETE_FOLDER; _menu_delete_folder_armed is the
+        # same two-press-confirm pattern as _menu_delete_armed (Delete
+        # Book) above, just scoped to whichever folder is highlighted.
+        self.lib_delete_folder_index = 0
+        self._menu_delete_folder_armed = False
 
         self.theme_menu_index = 0  # selection on SCREEN_THEME_MENU
         self.video_settings_index = 0  # v26.07.20.09: selection on SCREEN_VIDEO_SETTINGS
@@ -6997,6 +8255,10 @@ class App:
         self.te_checking_start = None  # time.time() when validation began,
                                         # for the "Checking... (Ns)" spinner
         self.te_error = None
+        # v26.07.23.07: False by default -- only New Folder passes
+        # autocap=True to open_text_entry(). See that method's own
+        # docstring for why this is scoped, not global.
+        self.te_autocap = False
 
         # Downloader plugin UI state.
         self.dl_source_index = 0     # selection on SCREEN_DOWNLOAD_SOURCES
@@ -7010,6 +8272,13 @@ class App:
                                       # screen at large Font Size.
         self.download_browse_menu_index = 0  # v26.07.21.42: selection on
                                       # SCREEN_DOWNLOAD_BROWSE_MENU.
+        self.download_quick_menu_index = 0   # v26.07.24.04: selection on
+                                      # SCREEN_DOWNLOAD_QUICK_MENU.
+        self.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_SOURCES
+                                      # v26.07.24.04: which of the six
+                                      # picker screens opened the quick
+                                      # menu, so B/Back returns to the
+                                      # right one.
 
         # v26.07.16.24: Settings > Credits / License and Settings > Help --
         # same static-scroll-overlay pattern as dl_help above (return
@@ -7037,6 +8306,12 @@ class App:
         self.dl_loading_start = None  # time.time() a load began, for the
                                        # "Loading... (Ns)" spinner (v0.1.62)
         self.dl_load_error = None
+        # v26.07.23.03: True when dl_items came from the offline local-
+        # folder fallback (JW_PLUGIN.list_local_folder_items()) rather
+        # than a live network fetch -- lets draw_download_browse() show
+        # an "Offline" note instead of silently looking like a normal
+        # (successful) live category load.
+        self.dl_offline_local = False
         self._dl_downloading_idx = None  # index currently mid-download, or None
         self._dl_video_all_items = []  # v0.1.110: unfiltered video catalog, see search_video_items()
         self.video_source_index = 0    # v0.1.110: selection on SCREEN_DOWNLOAD_VIDEO_SOURCES
@@ -7045,6 +8320,14 @@ class App:
         self._pending_video_source = None  # v26.07.15.09: remembers WHICH
                                         # VIDEO_SOURCES entry opened the series
                                         # picker, mirrors _pending_audio_source
+        # v26.07.23.03 (Kaleb's request: per-category download subfolders
+        # + offline fallback listing): tracks WHICH VIDEO_SOURCES entry
+        # (or subcategory leaf) is currently open on SCREEN_DOWNLOAD_
+        # BROWSE, mirroring _current_audio_source exactly -- used to
+        # pick the ROMS/movies subfolder name and to recognize a
+        # category worth offline-scanning. None for Search Videos (no
+        # single stable category to file those under).
+        self._current_video_source = None
         self.dl_is_video = False  # v0.1.90: True while SCREEN_DOWNLOAD_BROWSE is
                                    # showing a video catalog (jw_fetch videos)
                                    # rather than an EPUB catalog -- start_download()
@@ -7062,6 +8345,24 @@ class App:
         self.audio_book_index = 0
         self.dl_is_audio = False
         self._pending_audio_source = None
+        # v26.07.23.01 (Kaleb's request): "Download All" for the real
+        # music categories (Original Songs, Sing Out Joyfully mixes,
+        # Sing to Jehovah--Chorus, Children's Songs, Kingdom Melodies --
+        # see AUDIO_SOURCES' "music_category" flag in jw_fetch.py).
+        # _dl_all_running guards against double-triggering (START held
+        # or double-tapped) the same way _dl_downloading_idx guards a
+        # single download; _dl_all_progress is (done, total) for the
+        # status-bar readout while it runs.
+        self._dl_all_running = False
+        self._dl_all_progress = (0, 0)
+        # v26.07.23.01: tracks WHICH AUDIO_SOURCES entry is currently
+        # open on SCREEN_DOWNLOAD_BROWSE, for the "music_category" flag
+        # check -- distinct from _pending_audio_source, which only ever
+        # gets set for "books": True sources (its one existing job, see
+        # its own comment above). None of the music categories are
+        # "books" sources, so a separate attribute is needed rather than
+        # overloading that one.
+        self._current_audio_source = None
 
         self.status_msg = None   # brief on-screen feedback (bookmark saved/
         self.status_until = 0    # updated/limit-reached, delete confirmed, etc.
@@ -7106,27 +8407,42 @@ class App:
         # see play_video_item()/download_video_link() call sites' own
         # comments for exactly where this is and isn't threaded through.
         self.video_stream_quality = load_settings().get("video_stream_quality", "480p")
-        # v26.07.20.38 (Kaleb's request): "Auto" (default -- mpv
-        # preferred, ffplay fallback if mpv isn't found, same as
-        # today's existing behavior), "mpv", or "ffplay" -- an explicit
-        # manual override for anyone who wants to force one player
-        # specifically (e.g. mpv has friction with a specific video, or
-        # wanting ffplay's lighter CPU cost for a long reading session
-        # with occasional video). See native_video.play_jw_video()'s own
-        # player_pref param for how this is actually applied -- even
-        # with an explicit choice, it still falls back to the other
-        # player if the preferred one genuinely isn't found on this
-        # device, same tolerant philosophy as every other player-
-        # discovery path in this app.
-        self.video_player_pref = load_settings().get("video_player_pref", "auto")
+        # v26.07.23.28 (Kaleb's request: "remove auto player mode and
+        # only use mpv as default and have ffmpeg as alternate option"):
+        # "auto" and "mpv" were already functionally IDENTICAL in the
+        # selection logic (see native_video.play_jw_video()'s own
+        # player_pref param) -- both preferred mpv first, ffplay as
+        # fallback if mpv genuinely isn't found. Removing "auto" as a
+        # distinct settings value is therefore just simplifying the
+        # UI/settings surface (a 2-way toggle instead of 3-way), not a
+        # behavior change -- "mpv" IS what "auto" already did.
+        self.video_player_pref = load_settings().get("video_player_pref", "mpv")
+        if self.video_player_pref not in ("mpv", "ffplay"):
+            self.video_player_pref = "mpv"  # defensive -- a stale "auto"
+                                             # value from before this
+                                             # existed, or any hand-
+                                             # edited settings.json,
+                                             # falls back safely
         # v26.07.21.36 (Kaleb's request): same manual mpv/ffplay override
         # for audio playback -- separate setting from video_player_pref
-        # since Kaleb may reasonably want a different player for each
-        # (e.g. mpv for video's OSD progress bar, ffplay for audio's
-        # lighter footprint during a long song queue). Same tolerant
-        # fallback behavior as video -- see
+        # since Kaleb may reasonably want a different player for each.
+        # Same tolerant fallback behavior as video -- see
         # native_video.play_audio_file()'s own player_pref param.
-        self.audio_player_pref = load_settings().get("audio_player_pref", "auto")
+        self.audio_player_pref = load_settings().get("audio_player_pref", "mpv")
+        if self.audio_player_pref not in ("mpv", "ffplay"):
+            self.audio_player_pref = "mpv"  # same defensive fallback
+        # v26.07.23.29 ROLLBACK (Kaleb's report: "the open close settings
+        # for keeping on don't work at all in any way it always goes to
+        # standby no matter what when you close the lid... let's default
+        # to the original plan for both video and audio [and] remove the
+        # settings toggle"): the v26.07.23.12-.20 "On Lid/Standby"
+        # three-way audio / two-way video toggle never actually worked
+        # as designed on real hardware. Both video_stop_on_lid_close and
+        # audio_lid_mode settings, and the whole selection UI for them,
+        # are removed entirely -- video and audio both now
+        # unconditionally keep the screen from sleeping during playback,
+        # the same simple, well-tested behavior video alone had since
+        # v26.07.20.35, well before any of this existed.
         # v26.07.20.32 (Kaleb's request, following his own on-device
         # testing that ruled out images as the cause): REPLACES the old
         # _video_streaming_active flag entirely. Previous design ran
@@ -7653,15 +8969,15 @@ class App:
         self.books directly, or a change made while a filter is active
         would silently sort/re-add books that shouldn't be visible."""
         if self.lib_filter_mode == "finished":
-            filtered = [b for b in self._all_books if b["filename"] in self.finished]
+            filtered = [b for b in self._all_books if b["relpath"] in self.finished]
         elif self.lib_filter_mode == "unfinished":
-            filtered = [b for b in self._all_books if b["filename"] not in self.finished]
+            filtered = [b for b in self._all_books if b["relpath"] not in self.finished]
         else:
             filtered = self._all_books
         self.books = sort_library(filtered, self.lib_sort_mode, self.pinned)
 
     # -------- generic text entry (v0.1.30) --------
-    def open_text_entry(self, prompt, initial_value, on_confirm, return_screen, on_validate=None, hint=""):
+    def open_text_entry(self, prompt, initial_value, on_confirm, return_screen, on_validate=None, hint="", autocap=False):
         """Opens the D-pad letter-grid text-entry screen. Two ways to
         finish, mutually exclusive:
           - on_confirm(app, value): fires immediately when OK is
@@ -7680,7 +8996,15 @@ class App:
         hint: (v0.1.40) optional one-line helper text shown under the
         input box when there's no error/checking status to show instead
         -- e.g. common abbreviations for a code-entry screen. Blank by
-        default; purely additive, no effect on existing callers."""
+        default; purely additive, no effect on existing callers.
+
+        autocap: (v26.07.23.07, Kaleb's request: auto-capitalize each
+        word for New Folder, but explicitly NOT for anything that could
+        be a search query -- his own follow-up concern about search-
+        matching problems) -- False by default, so every existing
+        caller (Search Audio/Videos/Gutenberg, pub code entry, theme
+        naming) is completely unaffected; only New Folder passes True.
+        """
         self.te_value = initial_value or ""
         self.te_row = 0
         self.te_col = 0
@@ -7691,6 +9015,7 @@ class App:
         self.te_checking = False
         self.te_error = None
         self.te_return_screen = return_screen
+        self.te_autocap = autocap
         self.screen = SCREEN_TEXT_ENTRY
 
 
@@ -7994,6 +9319,26 @@ class App:
                 items, err = loader(**kwargs)
             except Exception as e:
                 items, err = [], str(e)
+            if err and not items:
+                # v26.07.23.03 (Kaleb's request: "will category pages
+                # load with the downloaded tracks showing" with no
+                # internet -- until now, no, this just showed the raw
+                # network error with nothing else). Scan the category's
+                # own subfolder (same one start_download() just wrote
+                # into) and show whatever's already there instead of a
+                # dead end. Only meaningful for a real tracked category
+                # (_current_video_source set) -- Search Videos has none,
+                # so offline search results still just show the error,
+                # same as before.
+                local_dir = self._category_dest_dir(is_video=True)
+                local_items, _ = JW_PLUGIN.list_local_folder_items(local_dir)
+                if local_items:
+                    items, err = local_items, None
+                    self.dl_offline_local = True
+                else:
+                    self.dl_offline_local = False
+            else:
+                self.dl_offline_local = False
             if self.dl_is_video:  # guard: person didn't back out meanwhile
                 self._dl_video_all_items = items
                 self.dl_items = items
@@ -8031,6 +9376,18 @@ class App:
                 items, err = loader(**kwargs)
             except Exception as e:
                 items, err = [], str(e)
+            if err and not items:
+                # v26.07.23.03: same offline fallback as
+                # open_plugin_video_list() -- see that one's comment.
+                local_dir = self._category_dest_dir(is_video=False)
+                local_items, _ = JW_PLUGIN.list_local_folder_items(local_dir)
+                if local_items:
+                    items, err = local_items, None
+                    self.dl_offline_local = True
+                else:
+                    self.dl_offline_local = False
+            else:
+                self.dl_offline_local = False
             if self.dl_is_audio:  # guard: person didn't back out meanwhile
                 self.dl_items = items
                 self.dl_load_error = err
@@ -8139,7 +9496,15 @@ class App:
         self._load_dl_page()
 
     def start_download(self, idx):
-        if self._dl_downloading_idx is not None:
+        if self._dl_downloading_idx is not None or self._dl_all_running:
+            # v26.07.23.02 BUG FIX (found during Download All testing):
+            # this only checked _dl_downloading_idx before -- so a single
+            # A-press download could fire a SECOND concurrent thread
+            # while start_download_all()'s background thread was already
+            # mid-batch, racing status_msg updates between the two loops
+            # exactly like this guard's own comment already warned
+            # against for two single downloads. Now both download paths
+            # share one "only one at a time" rule.
             return  # one at a time -- avoid overlapping writes/status races
         if idx < 0 or idx >= len(self.dl_items):
             return
@@ -8173,12 +9538,50 @@ class App:
                         if not resolved:
                             raise RuntimeError(rerr or "Could not resolve video")
                         video_item = resolved
-                    movies_dir = JW_PLUGIN.find_movies_dir()
-                    ok, msg, _path = JW_PLUGIN.download_video(video_item, movies_dir)
+                    movies_dir = self._category_dest_dir(is_video=True)
+                    os.makedirs(movies_dir, exist_ok=True)  # v26.07.23.03:
+                                                              # category
+                                                              # subfolder
+                                                              # may not
+                                                              # exist yet
+                    # v26.07.23.21 (Kaleb's request: "series section
+                    # files can end up in other categories... make
+                    # series the source of truth to reduce ping-
+                    # ponging"). Unlike EPUBs (which get a one-time
+                    # flat -> category MOVE), video/audio never sit in
+                    # a genuine flat/uncategorized state -- they always
+                    # land in SOME category folder via _category_dest_
+                    # dir(). So the right operation here isn't "move",
+                    # it's "dedupe only": if this exact filename already
+                    # exists ANYWHERE ELSE in the movies library (e.g.
+                    # already downloaded once via "Series", now also
+                    # reachable through a different, overlapping
+                    # VIDEO_SOURCES entry -- confirmed this really
+                    # happens, see jw_fetch.py's own "BYTE-IDENTICAL to
+                    # Series'..." comments), leave it EXACTLY where it
+                    # already is and skip the download entirely, rather
+                    # than creating a second copy in the new folder.
+                    # Whichever folder it landed in FIRST (Series or
+                    # otherwise) becomes the permanent home automatically
+                    # -- no movement, so no ping-pong is even possible.
+                    stray = find_existing_file_elsewhere(
+                        video_item["filename"], movies_dir, JW_PLUGIN.find_movies_dir())
+                    if stray:
+                        ok, msg, _path = True, f'"{item["title"]}" already downloaded (found in a different category)', stray
+                        found_elsewhere = True
+                    else:
+                        ok, msg, _path = JW_PLUGIN.download_video(video_item, movies_dir)
+                        found_elsewhere = False
                 except Exception as e:
                     ok, msg = False, f"Download failed: {e}"
+                    found_elsewhere = False
                 self._dl_downloading_idx = None
-                if ok:
+                if ok and not found_elsewhere:
+                    # v26.07.23.21: only overwrite msg with the generic
+                    # "downloaded, exit and open..." text for an ACTUAL
+                    # fresh download -- a found-elsewhere dedupe hit
+                    # already has its own more accurate message, which
+                    # this used to clobber unconditionally.
                     msg = (f'"{item["title"]}" downloaded. Exit PicoReader and open '
                            f'ROM Collection -> Movies to watch it.')
                 self.set_status(msg, duration=6.0)
@@ -8209,12 +9612,27 @@ class App:
                         if not resolved:
                             raise RuntimeError(rerr or "Could not resolve audio")
                         audio_item = resolved
-                    music_dir = JW_PLUGIN.find_music_dir()
-                    ok, msg, _path = JW_PLUGIN.download_audio(audio_item, music_dir)
+                    music_dir = self._category_dest_dir(is_video=False)
+                    os.makedirs(music_dir, exist_ok=True)  # v26.07.23.03
+                    # v26.07.23.21 (Kaleb's request: "series section files
+                    # can end up in other categories... make series the
+                    # source of truth" -- same dedupe-only reasoning as
+                    # the video branch above, see its own comment for the
+                    # full explanation of why "dedupe, never move" is the
+                    # right operation for audio/video, unlike EPUBs).
+                    stray = find_existing_file_elsewhere(
+                        audio_item["filename"], music_dir, JW_PLUGIN.find_music_dir())
+                    if stray:
+                        ok, msg, _path = True, f'"{item["title"]}" already downloaded (found in a different category)', stray
+                        found_elsewhere = True
+                    else:
+                        ok, msg, _path = JW_PLUGIN.download_audio(audio_item, music_dir)
+                        found_elsewhere = False
                 except Exception as e:
                     ok, msg = False, f"Download failed: {e}"
+                    found_elsewhere = False
                 self._dl_downloading_idx = None
-                if ok:
+                if ok and not found_elsewhere:
                     msg = (f'"{item["title"]}" downloaded. Exit PicoReader and open '
                            f'ROM Collection -> Music to listen to it.')
                 self.set_status(msg, duration=6.0)
@@ -8227,7 +9645,124 @@ class App:
 
         def _do_download():
             try:
-                ok, msg, _path = plugin.download(item, LIBRARY_DIR)
+                # v26.07.23.06 (Kaleb's request: "we would need to save
+                # epubs into those sub categories too" -- same pattern
+                # as JW Audio/Videos' per-category subfolders). Only
+                # when the plugin declares a real category is currently
+                # open (dl_category set, and not one of that plugin's
+                # optional CATEGORIES_NO_FOLDER mixed/pseudo-categories
+                # -- e.g. JW's "New Issues" RSS feed or Gutenberg's
+                # Popular/Latest/Random views, none of which are a
+                # single stable genre/type worth a folder of their
+                # own). Search results and the plain category-less
+                # browse view leave dl_category None, so those stay
+                # flat at LIBRARY_DIR root, same as before this existed.
+                #
+                # v26.07.23.08 (Kaleb's request: those mixed views
+                # "should show category markers... we can get those
+                # categorized"): when dl_category IS one of the mixed
+                # pseudo-categories, ask the plugin for THIS item's own
+                # real category instead of giving up and going flat --
+                # see resolve_item_category() in jw_fetch.py (pure pub-
+                # code lookup) and gutenberg_fetch.py (a live detail-
+                # page bookshelf check) for how each plugin answers
+                # this. Falls back to flat if the plugin can't resolve
+                # one, same as before this existed.
+                folder_category = None
+                if self.dl_category and self.dl_category not in getattr(plugin, "CATEGORIES_NO_FOLDER", []):
+                    folder_category = self.dl_category
+                elif self.dl_category in getattr(plugin, "CATEGORIES_NO_FOLDER", []):
+                    resolver = getattr(plugin, "resolve_item_category", None)
+                    if resolver:
+                        try:
+                            folder_category = resolver(item)
+                        except Exception:
+                            folder_category = None  # best-effort only --
+                                                      # a resolver failure
+                                                      # (network, parse)
+                                                      # must never block
+                                                      # the download itself
+
+                dest_dir = LIBRARY_DIR
+                if folder_category:
+                    # v26.07.23.06: sanitize_folder_name() lives in
+                    # jw_fetch.py (shared utility, reused here rather
+                    # than duplicated in gutenberg_fetch.py) -- fall
+                    # back to the plain category name if JW_PLUGIN
+                    # somehow isn't loaded, rather than crashing the
+                    # download over a missing sanitizer.
+                    sanitizer = getattr(JW_PLUGIN, "sanitize_folder_name", None)
+                    folder_name = sanitizer(folder_category) if sanitizer else folder_category
+                    dest_dir = os.path.join(LIBRARY_DIR, folder_name)
+                    os.makedirs(dest_dir, exist_ok=True)
+
+                # v26.07.23.08 (Kaleb's request: "if it sees duplicate
+                # copies of the file in different places... have it
+                # migrate them to the original folders"): before
+                # touching the network at all, check whether this
+                # exact filename already exists SOMEWHERE ELSE in the
+                # library (e.g. a stray flat copy from before category
+                # subfolders existed, or a copy from a previous mixed-
+                # view download that didn't get categorized). If so,
+                # move it into the correct destination instead of
+                # downloading a second copy -- free (no network),
+                # instant, and cleans up the stray in the process.
+                stray = find_existing_book_elsewhere(item["filename"], dest_dir)
+                # v26.07.23.20 BUG FIX (Kaleb's own question: "if I go to
+                # another category will it move it from one category to
+                # the other over and over?" -- confirmed live, yes it
+                # would have): a book can legitimately belong to MULTIPLE
+                # real Gutenberg bookshelves (e.g. Sherlock Holmes is
+                # filed under both "Crime, Thrillers & Mystery" and
+                # "Short Stories") -- browsing it via a DIFFERENT real
+                # category than the one it's already organized under
+                # used to move it AGAIN every single time, ping-ponging
+                # it back and forth forever depending on whichever
+                # category was most recently browsed. Migration should
+                # only ever pull a book OUT of limbo (flat, uncategorized
+                # -- sitting directly at LIBRARY_DIR's root) into its
+                # first real category; once it already has ANY category
+                # folder, later downloads from a different valid category
+                # must leave it alone rather than second-guessing where
+                # it "really" belongs. Checked live: this is exactly the
+                # same reasoning CATEGORIES_NO_FOLDER already uses one
+                # level up (a mixed view isn't a stable category to file
+                # under) -- an ALREADY-CHOSEN real folder is equally not
+                # something a later browse should override.
+                stray_is_flat = stray and os.path.dirname(os.path.abspath(stray)) == os.path.abspath(LIBRARY_DIR)
+                if stray and not stray_is_flat:
+                    # Already organized into some other real category --
+                    # leave it exactly where it is. Report the SAME
+                    # "already downloaded" style message download() itself
+                    # would give for a copy sitting at the current
+                    # dest_dir, so this doesn't look like an error.
+                    ok, msg, _path = False, f'"{item["title"]}" already in Library', stray
+                elif stray_is_flat:
+                    target = os.path.join(dest_dir, os.path.basename(item["filename"]))
+                    if os.path.exists(target):
+                        # target already has its own copy too (rare --
+                        # both a stray AND a real copy exist) -- leave
+                        # the stray alone rather than overwrite/collide;
+                        # normal "already downloaded" path below handles
+                        # the existing target copy.
+                        ok, msg, _path = plugin.download(item, dest_dir)
+                    else:
+                        shutil.move(stray, target)
+                        # v26.07.23.15 (Kaleb's request: "would that hurt
+                        # anything" -- yes, without this: pins/finished
+                        # get silently purged on the next library scan,
+                        # bookmarks/reading position become invisible.
+                        # Carries all three along with the file itself.
+                        try:
+                            migrate_book_state(stray, target)
+                        except Exception:
+                            pass  # best-effort -- a failure here must
+                                  # never undo the successful file move
+                                  # itself, worst case is the book keeps
+                                  # its OLD pin/bookmark state orphaned
+                        ok, msg, _path = True, f'Moved existing copy of "{item["title"]}" into place', target
+                else:
+                    ok, msg, _path = plugin.download(item, dest_dir)
             except Exception as e:
                 ok, msg = False, f"Download failed: {e}"
             self._dl_downloading_idx = None
@@ -8278,6 +9813,7 @@ class App:
                 app.dl_page = 1
                 app.dl_has_next = False
                 app.dl_load_error = None
+                app.dl_offline_local = False  # v26.07.23.03: clear stale banner
                 app.dl_index = 0
                 app.te_checking = False
                 app.screen = SCREEN_DOWNLOAD_BROWSE
@@ -8289,24 +9825,52 @@ class App:
                               None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate,
                               hint=getattr(self.dl_plugin, "MANUAL_CODE_HINT", ""))
 
+    def _category_dest_dir(self, is_video):
+        """v26.07.23.03 (Kaleb's request: organize downloads into per-
+        category subfolders inside ROMS/Music and ROMS/movies, named
+        after the category -- e.g. ROMS/Music/Kingdom Melodies -- so
+        both muOS's native player AND jw_fetch.py's own offline
+        fallback can see what's already downloaded, grouped sensibly).
+
+        Returns the full destination directory for whatever's
+        currently open on SCREEN_DOWNLOAD_BROWSE: base_dir/category
+        if a source is tracked (_current_video_source/
+        _current_audio_source), else just base_dir (Search Videos/
+        Search Audio -- no single stable category to file those
+        under, stays flat as before). Does NOT create the directory --
+        callers that are about to WRITE into it (start_download(),
+        start_download_all()) must os.makedirs() themselves;
+        _resolve_media_source() (read-only, just checking whether a
+        file already exists) must not create empty folders on every
+        playback check.
+        """
+        base_dir = JW_PLUGIN.find_movies_dir() if is_video else JW_PLUGIN.find_music_dir()
+        source = self._current_video_source if is_video else self._current_audio_source
+        label = (source or {}).get("label")
+        if not label:
+            return base_dir
+        return os.path.join(base_dir, JW_PLUGIN.sanitize_folder_name(label))
+
     def _resolve_media_source(self, item, is_video):
         """v26.07.21.39 (Kaleb's request: "if we download the songs or
         video will the app default to that copy when playing?" -- until
         now, no, it always streamed even when a local copy already
         existed). Returns (source, is_local): if this item was already
-        downloaded (same folder/filename convention download_video()/
-        download_audio() themselves use -- find_movies_dir()/
-        find_music_dir() + basename(item["filename"])), returns the
-        local path with is_local=True; otherwise falls back to the
-        item's own "_video_url"/"_audio_url" with is_local=False, same
-        as before this existed. Used by every play_*_item()/play_*_
-        queue_from() method below, both single-item and full-queue
-        playback, so "prefer the downloaded copy" is consistent
-        everywhere rather than only some entry points."""
+        downloaded (same category-subfolder/filename convention
+        download_video()/download_audio() themselves use, via
+        _category_dest_dir() -- v26.07.23.03: was a flat find_movies_
+        dir()/find_music_dir() + basename(item["filename"]) before
+        per-category subfolders existed), returns the local path with
+        is_local=True; otherwise falls back to the item's own
+        "_video_url"/"_audio_url" with is_local=False, same as before
+        this existed. Used by every play_*_item()/play_*_queue_from()
+        method below, both single-item and full-queue playback, so
+        "prefer the downloaded copy" is consistent everywhere rather
+        than only some entry points."""
         filename = item.get("filename")
         if filename and native_video is not None:
             try:
-                dest_dir = JW_PLUGIN.find_movies_dir() if is_video else JW_PLUGIN.find_music_dir()
+                dest_dir = self._category_dest_dir(is_video)
                 local_path = os.path.join(dest_dir, os.path.basename(filename))
                 if os.path.isfile(local_path):
                     return local_path, True
@@ -8430,7 +9994,9 @@ class App:
             # v26.07.21.24 (Kaleb's request, remapped from v26.07.20.35):
             # L1/R1 -> +-1min seek, L2/R2 -> +-10min skip -- see
             # native_video.py's own comment on _translate_loop for the
-            # full current layout, including D-pad Up/Down brightness.
+            # full current layout, including D-pad Up/Down title-OSD
+            # toggle/mute (v26.07.24.03; was brightness, see that
+            # entry's own comment for why it never worked here).
             joy_l1=JOY_L, joy_r1=JOY_R, joy_l2=JOY_L2, joy_r2=JOY_R2,
             # v26.07.21.01: Y -> subtitle toggle/cycle (Kaleb's request).
             joy_y=JOY_Y,
@@ -8495,21 +10061,43 @@ class App:
             return
 
         def _on_track_change(item, pos, total):
-            SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
-            SDL.SDL_RenderClear(self.renderer)
-            label = "Shuffle All" if shuffle else "Play All"
-            render_text(self.renderer, self.fonts.ui_heading, label, COL_ACCENT,
-                        _sx(24), _sy(24))
-            render_text(self.renderer, self.fonts.ui_body, f"({pos + 1}/{total})", COL_DIM,
-                        _sx(24), _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) + _sy(8))
-            title_y = _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) \
-                + TTF.TTF_FontHeight(self.fonts.ui_body) + _sy(24)
-            render_text(self.renderer, self.fonts.ui_body, item.get("title", ""), COL_TEXT,
-                        _sx(24), title_y)
-            render_text(self.renderer, self.fonts.ui_small,
-                        "SELECT Next  START Prev  B Stop", COL_DIM,
-                        _sx(24), SH - _sy(hint_height(self.fonts)) + _sy(10))
-            SDL.SDL_RenderPresent(self.renderer)
+            # v26.07.24.01 BUG FIX (Kaleb's real on-device report:
+            # "in between each video, glitchy text shows up with the
+            # title of the next video just before it plays... looks
+            # like our PicoReader text is bleeding through"). Same root
+            # cause as the two double-buffering fixes already documented
+            # elsewhere in this file (play_video_from's pre-launch and
+            # post-playback clears): mpv/ffplay draw directly to the
+            # display, entirely outside this SDL renderer's own
+            # dirty-rect tracking, so a SINGLE RenderClear+RenderPresent
+            # here only guarantees ONE of the two swapchain buffers
+            # actually holds this "next track" card -- the other buffer
+            # can still be showing the previous video's last raw frame,
+            # and whichever buffer the display flips to next is
+            # effectively random, producing exactly this alternating/
+            # torn "text bleeding through video" glitch between queue
+            # items. Unlike the existing blank-screen double-clears,
+            # this screen has real content to show, not black -- so the
+            # fix is to draw AND present this same card TWICE (not
+            # clear-blank twice), guaranteeing both buffers hold the
+            # identical, correct frame before play_jw_video() blocks on
+            # the next item.
+            for _ in range(2):
+                SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+                SDL.SDL_RenderClear(self.renderer)
+                label = "Shuffle All" if shuffle else "Play All"
+                render_text(self.renderer, self.fonts.ui_heading, label, COL_ACCENT,
+                            _sx(24), _sy(24))
+                render_text(self.renderer, self.fonts.ui_body, f"({pos + 1}/{total})", COL_DIM,
+                            _sx(24), _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) + _sy(8))
+                title_y = _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) \
+                    + TTF.TTF_FontHeight(self.fonts.ui_body) + _sy(24)
+                render_text(self.renderer, self.fonts.ui_body, item.get("title", ""), COL_TEXT,
+                            _sx(24), title_y)
+                render_text(self.renderer, self.fonts.ui_small,
+                            "SELECT Next  START Prev  B Stop", COL_DIM,
+                            _sx(24), SH - _sy(hint_height(self.fonts)) + _sy(10))
+                SDL.SDL_RenderPresent(self.renderer)
 
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
         SDL.SDL_RenderClear(self.renderer)
@@ -8587,11 +10175,17 @@ class App:
         SDL.SDL_RenderClear(self.renderer)
         SDL.SDL_RenderPresent(self.renderer)
         native_video.maybe_trim_memory(self._clear_text_texture_cache)
+        # v26.07.23.29 ROLLBACK: back to plain suppress_idle_display()/
+        # restore_idle_display(), same as video -- the "On Lid/Standby"
+        # toggle this used to dispatch through never worked as designed
+        # on real hardware (see App.__init__'s own removal comment for
+        # the full story), so it's gone, and this is unconditional again.
         _orig_idle_sleep, _orig_idle_display = native_video.suppress_idle_display()
         try:
             ok, msg = native_video.play_audio_file(
                 url, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l=JOY_L, joy_r=JOY_R,
-                player_pref=self.audio_player_pref, is_local=is_local, title=item.get("title"))
+                player_pref=self.audio_player_pref, is_local=is_local, title=item.get("title"),
+                joy_l2=JOY_L2, joy_r2=JOY_R2)
         finally:
             native_video.restore_idle_display(_orig_idle_sleep, _orig_idle_display)
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
@@ -8609,12 +10203,25 @@ class App:
         bound to Y) and "Shuffle All" (shuffle=True, bound to START) on
         SCREEN_DOWNLOAD_BROWSE while dl_is_audio -- plays every item
         currently in self.dl_items back-to-back via
-        native_video.play_audio_queue(). `on_track_change` draws a
-        simple "Now Playing" frame directly (not the full screen-draw
-        stack) between tracks, since this whole call blocks the main
-        loop the same way single-track playback already does -- without
-        it, the screen would just go black with no feedback for
-        however many tracks are in the queue."""
+        native_video.play_audio_queue().
+
+        v26.07.24.02 (Kaleb's request, after confirming the queue-
+        transition glitch fix wasn't actually needed here): this used
+        to draw its own "Now Playing" text card between tracks
+        (double-presented per the v26.07.24.01 fix). Dropped entirely
+        for audio -- mpv already shows the track title natively via
+        --osd-playing-msg=${media-title} (see _MPV_AUDIO_ARGS in
+        native_video.py), so the custom card was pure redundancy for
+        the mpv path, and ffplay has no on-screen title capability at
+        all (confirmed via its documented feature set), so the card
+        never worked there either way. `on_track_change` now just does
+        the same proven blank double-clear+present used everywhere else
+        in this file at the mpv/ffplay display-handoff boundary --
+        removes the whole double-buffering glitch class for audio by
+        having nothing left to glitch. Kept for VIDEO (see
+        play_video_queue_from) since neither player shows a title
+        on-screen for video at all -- no native equivalent to fall back
+        on there."""
         if native_video is None:
             self.set_status("Audio playback isn't available on this device")
             return
@@ -8625,18 +10232,8 @@ class App:
         def _on_track_change(item, pos, total):
             SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
             SDL.SDL_RenderClear(self.renderer)
-            label = "Shuffle All" if shuffle else "Play All"
-            render_text(self.renderer, self.fonts.ui_heading, label, COL_ACCENT,
-                        _sx(24), _sy(24))
-            render_text(self.renderer, self.fonts.ui_body, f"({pos + 1}/{total})", COL_DIM,
-                        _sx(24), _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) + _sy(8))
-            title_y = _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) \
-                + TTF.TTF_FontHeight(self.fonts.ui_body) + _sy(24)
-            render_text(self.renderer, self.fonts.ui_body, item.get("title", ""), COL_TEXT,
-                        _sx(24), title_y)
-            render_text(self.renderer, self.fonts.ui_small,
-                        "A Pause  L/R Prev/Next  B Stop", COL_DIM,
-                        _sx(24), SH - _sy(hint_height(self.fonts)) + _sy(10))
+            SDL.SDL_RenderPresent(self.renderer)
+            SDL.SDL_RenderClear(self.renderer)
             SDL.SDL_RenderPresent(self.renderer)
 
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
@@ -8647,7 +10244,8 @@ class App:
             self.dl_items, start_index=start_idx, shuffle=shuffle,
             sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l=JOY_L, joy_r=JOY_R,
             player_pref=self.audio_player_pref, on_track_change=_on_track_change,
-            resolve_source=lambda item: self._resolve_media_source(item, is_video=False))
+            resolve_source=lambda item: self._resolve_media_source(item, is_video=False),
+            joy_l2=JOY_L2, joy_r2=JOY_R2)
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
         SDL.SDL_RenderClear(self.renderer)
         SDL.SDL_RenderPresent(self.renderer)
@@ -8656,6 +10254,173 @@ class App:
         self._nudge_window_after_video()
         self.set_status(msg or ("Finished playing" if ok else "Playback failed"), duration=4.0)
         self.dirty = True
+
+    def start_download_all(self):
+        """v26.07.23.01 (Kaleb's request): "Download All" for a music
+        category currently open on SCREEN_DOWNLOAD_BROWSE (Original
+        Songs, either Sing Out Joyfully mix, Sing to Jehovah--Chorus,
+        Children's Songs, or Kingdom Melodies -- see AUDIO_SOURCES'
+        "music_category" flag). Only reachable via that flag (checked
+        by the START handler before calling this), so no separate
+        eligibility check needed here.
+
+        Runs on ONE background thread for the whole category rather
+        than one thread per song -- sequential, not parallel, exactly
+        like start_download() already streams one file at a time
+        (same reasoning: no benefit to parallel HTTP on this hardware,
+        and it would race the debounced SD-card writes elsewhere in
+        the app). Reuses download_audio()'s own existing
+        "already downloaded" skip (checks os.path.exists per file), so
+        re-running Download All on a category you've partly grabbed
+        before only fetches what's missing -- no separate resume
+        tracking needed here.
+
+        Deliberately does NOT set self._dl_downloading_idx (that's the
+        single-item in-progress flag, drawn as "(downloading...)" next
+        to one row) -- _dl_all_running is its own separate flag so a
+        person can still back out (B) mid-batch without the UI
+        misreporting which single row is downloading.
+        """
+        if self._dl_all_running or self._dl_downloading_idx is not None:
+            return  # one download path at a time, same rule as start_download()
+        items = list(self.dl_items)
+        if not items:
+            return
+        # v26.07.23.19 BUG FIX (found checking "main thread or background
+        # thread issues" -- Kaleb's own request to re-audit): music_dir
+        # used to be computed INSIDE _do_download_all(), i.e. on the
+        # background thread, AFTER threading.Thread(...).start() had
+        # already returned control to the main thread. `items` above was
+        # already correctly captured synchronously (a plain list copy,
+        # immune to self.dl_items changing later) -- but music_dir
+        # wasn't given the same treatment, leaving a real (if narrow --
+        # needs the OS scheduler to delay the new thread's first
+        # instruction past whatever it takes a person to navigate to a
+        # DIFFERENT audio category and press something else) race: if
+        # self._current_audio_source changed before the background
+        # thread got its first turn on the CPU, every file in this
+        # batch would silently land in the WRONG category's folder,
+        # with no visible error -- exactly the kind of bug that's easy
+        # to miss until someone notices files in an unexpected place.
+        # Fixed by capturing music_dir synchronously here too, matching
+        # the same "capture what's needed before the thread starts, not
+        # inside it" pattern items already used correctly.
+        music_dir = self._category_dest_dir(is_video=False)
+        self._dl_all_running = True
+        self._dl_all_progress = (0, len(items))
+        self.set_status(f"Downloading all (0/{len(items)})...", duration=3600)
+        self.dirty = True
+
+        def _do_download_all():
+            # v26.07.23.11 BUG FIX (found during error-handling audit):
+            # this makedirs() used to be the only one of the four in
+            # the app NOT wrapped in a try/except -- a failure here
+            # (permission denied, disk full, invalid path) would raise
+            # uncaught inside this background thread, which Python
+            # silently kills without ever reaching the _dl_all_running
+            # = False line below -- leaving Download All permanently
+            # stuck "running" (blocking both start_download() and any
+            # future start_download_all() call, since both check this
+            # flag) until the app was restarted. Now caught explicitly
+            # so a folder-creation failure reports a real error and
+            # cleanly releases the flag, same as every per-file failure
+            # in the loop below already does via its own try/except.
+            try:
+                os.makedirs(music_dir, exist_ok=True)
+            except OSError as e:
+                self._dl_all_running = False
+                self.set_status(f"Couldn't create folder: {e}", duration=6.0)
+                self.dirty = True
+                return
+            done = skipped = failed = 0
+            for i, audio_item in enumerate(items, start=1):
+                try:
+                    # v26.07.23.21 (Kaleb's request: "series section
+                    # files can end up in other categories... make
+                    # series the source of truth" -- same dedupe-only
+                    # reasoning as start_download()'s single-item audio/
+                    # video branches, applied here too for consistency
+                    # across every audio download path in the app).
+                    stray = find_existing_file_elsewhere(
+                        audio_item["filename"], music_dir, JW_PLUGIN.find_music_dir())
+                    if stray:
+                        # v26.07.23.22 BUG FIX (found during this same
+                        # feature's own follow-up sweep): this used to
+                        # set ok=True, which the done/skipped/failed
+                        # counting just below treats as a genuinely NEW
+                        # download -- so a dedupe hit (nothing actually
+                        # downloaded, an existing copy elsewhere was
+                        # just found and left alone) would inflate the
+                        # "N new" count in the final summary, e.g.
+                        # "Download All done: 3 new..." when really only
+                        # 1 was new and 2 were already-had-elsewhere.
+                        # ok=False + an "already downloaded" message
+                        # correctly buckets this as skipped instead,
+                        # matching download_audio()'s own equivalent
+                        # same-folder message exactly.
+                        ok, msg = False, f'"{audio_item["filename"]}" already downloaded elsewhere'
+                    else:
+                        ok, msg, _path = JW_PLUGIN.download_audio(audio_item, music_dir)
+                except Exception as e:
+                    ok, msg = False, str(e)
+                if ok:
+                    done += 1
+                elif "already downloaded" in (msg or ""):
+                    skipped += 1
+                else:
+                    failed += 1
+                self._dl_all_progress = (i, len(items))
+                self.set_status(f"Downloading all ({i}/{len(items)})...", duration=3600)
+                self.dirty = True
+            self._dl_all_running = False
+            summary = f"Download All done: {done} new, {skipped} already had, "
+            summary += f"{failed} failed" if failed else "0 failed"
+            self.set_status(summary, duration=8.0)
+            self.dirty = True
+
+        threading.Thread(target=_do_download_all, daemon=True).start()
+
+    def font_size_hotkey(self, btn):
+        """v26.07.23.30/.32 (Kaleb's request: "in both gutenberg py and
+        JW py all pop up menus need to have the font size option
+        added... some categories don't have features other than select
+        to open the list... I need to change font sometimes and it's
+        difficult" -- then refined to "make those L1 R1 font size" on
+        every download-flow screen, including SCREEN_DOWNLOAD_
+        CATEGORIES once its own jump-10 navigation moved off L/R onto
+        the D-pad's own LEFT/RIGHT instead, freeing L/R there too).
+        Rather than building six near-duplicate popup-menu UIs for the
+        download-flow screens that don't have one at all yet (source/
+        category/sub-category pickers -- SCREEN_DOWNLOAD_SOURCES,
+        _CATEGORIES, _VIDEO_SOURCES, _AUDIO_SOURCES, _VIDEO_SERIES,
+        _AUDIO_BOOKS), this is a shared L/R (L1/R1) hotkey -- confirmed
+        free on all six screens now -- that each of those screens' own
+        button handler calls with the raw btn string. Returns True if
+        this handled the button (caller should treat it as consumed,
+        same "return True if handled" convention elsewhere in this
+        app), False otherwise -- so callers can just write `if app.
+        font_size_hotkey(btn): pass` as their first check, or `elif
+        app.font_size_hotkey(btn): pass` alongside their existing
+        UP/DOWN/A/B/etc. chain. Exact same app.fonts.bigger()/
+        smaller() mutators and status-message wording the Library
+        screen's own L/R hotkey and the reading-view popup's "Font
+        Size +/-" menu items already use -- L/R now means the exact
+        same thing everywhere in the app that has it free."""
+        if btn == "L":
+            before = self.fonts.size_index
+            self.fonts.smaller()
+            pt = self.fonts.SIZE_STEPS[self.fonts.size_index]
+            self.set_status(f"Font size: {pt}pt (smallest)" if self.fonts.size_index == before
+                             else f"Font size: {pt}pt")
+            return True
+        elif btn == "R":
+            before = self.fonts.size_index
+            self.fonts.bigger()
+            pt = self.fonts.SIZE_STEPS[self.fonts.size_index]
+            self.set_status(f"Font size: {pt}pt (largest)" if self.fonts.size_index == before
+                             else f"Font size: {pt}pt")
+            return True
+        return False
 
     def cycle_sort_mode(self):
         idx = LIBRARY_SORT_MODES.index(self.lib_sort_mode)
@@ -8670,11 +10435,15 @@ class App:
         self.lib_index = 0
 
     def toggle_pin(self, book):
-        fname = book["filename"]
-        if fname in self.pinned:
-            self.pinned.discard(fname)
+        # v26.07.23.05: was book["filename"] (bare basename) -- collides
+        # across subfolders now that the library scans recursively (two
+        # different books happening to share a filename in different
+        # folders). "relpath" (path relative to LIBRARY_DIR) is unique.
+        key = book["relpath"]
+        if key in self.pinned:
+            self.pinned.discard(key)
         else:
-            self.pinned.add(fname)
+            self.pinned.add(key)
         save_pinned(self.pinned)
         selected_path = book["path"]
         self._apply_library_view()
@@ -8685,12 +10454,13 @@ class App:
                 break
 
     def toggle_finished(self, book):
-        fname = book["filename"]
-        was_finished = fname in self.finished
+        # v26.07.23.05: same relpath-identity fix as toggle_pin() above.
+        key = book["relpath"]
+        was_finished = key in self.finished
         if was_finished:
-            self.finished.discard(fname)
+            self.finished.discard(key)
         else:
-            self.finished.add(fname)
+            self.finished.add(key)
         save_finished(self.finished)
         selected_path = book["path"]
         self._apply_library_view()
@@ -14197,7 +15967,7 @@ def draw_library(renderer, app):
     # gap when it's off-screen. Only rendered when pinned_count > 0 (per
     # Kaleb's explicit follow-up) -- no reserved space at all otherwise,
     # so an empty-pins library looks identical to before this change.
-    pinned_count = sum(1 for b in app.books if b["filename"] in app.pinned)
+    pinned_count = sum(1 for b in app.books if b["relpath"] in app.pinned)
     next_y = sort_y + TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(2)
     if pinned_count > 0:
         render_text(renderer, app.fonts.ui_small, f"\u2665 {pinned_count} Pinned",
@@ -14227,7 +15997,7 @@ def draw_library(renderer, app):
     # anymore, back to a plain fixed-height row loop like v0.1.125 (no
     # variable row heights, no wrapping, no chapter-label cache).
     continue_book = app.most_recent_book()
-    continue_filename = continue_book["filename"] if continue_book else None
+    continue_path = continue_book["path"] if continue_book else None  # v26.07.23.05: was "filename" -- path is collision-safe across subfolders
 
     # v26.07.09.02: fixed-width icon gutter for resume/pin/finished
     # markers -- reserves room for the worst case (all three glyphs +
@@ -14276,7 +16046,7 @@ def draw_library(renderer, app):
                         # the glide itself worked while it existed.
             fill_rect_rounded(renderer, _sx(10), int(anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if bi == app.lib_index else COL_TEXT
-        is_continue = continue_filename is not None and book["filename"] == continue_filename
+        is_continue = continue_path is not None and book["path"] == continue_path
         # Status icons (resume/pin/finished) live in a fixed-width left
         # gutter (icon_gutter_w, computed once above the loop) rather
         # than prepended text, so titles start at the same x regardless
@@ -14288,7 +16058,7 @@ def draw_library(renderer, app):
         if is_continue:
             icons_str += "\u25ba"  # unambiguous "resume here" marker,
                                     # leftmost so it reads before finished
-        if book["filename"] in app.finished:
+        if book["relpath"] in app.finished:
             icons_str += ("\u2713" if not icons_str else " \u2713")
         suffix = ""
         if app.lib_sort_mode == "author" and book.get("author"):
@@ -14301,6 +16071,20 @@ def draw_library(renderer, app):
             # budgeting below even gets a say.
             author_fitted = _fit_text(app.fonts.ui_body, book["author"], row_max_w // 3)
             suffix += f"  \u2014 {author_fitted}"
+        if app.lib_sort_mode == "folder":
+            # v26.07.23.05 (Kaleb's request: a folder/category sort
+            # mode -- works for ANY folder on disk, app-created or a
+            # person's own manually-made subfolders in the Books ROM
+            # folder). Same lightweight suffix approach as author/
+            # last_read just above rather than a real header row --
+            # avoids touching this screen's fragile windowed-scroll/
+            # row-height math for what's meant to be a simple at-a-
+            # glance grouping cue. Root-level books (folder == "") get
+            # no suffix at all -- there's nothing to label them with.
+            folder = book.get("folder") or ""
+            if folder:
+                folder_fitted = _fit_text(app.fonts.ui_body, folder, row_max_w // 3)
+                suffix += f"  \u2014 {folder_fitted}"
         # v0.1.127: literal "Continue Reading" replaces the old percentage
         # suffix, and ONLY on this one row -- every other book's row has
         # no progress indicator at all anymore.
@@ -15693,12 +17477,33 @@ def _download_browse_menu_items(app):
     conditions the individual buttons on SCREEN_DOWNLOAD_BROWSE already
     use (dl_is_video/dl_is_audio/plugin capability flags) -- so this
     menu can never offer an action that wouldn't actually be reachable
-    some other way, and never omits one that is."""
+    some other way, and never omits one that is.
+
+    v26.07.23.30 (Kaleb's request: "in both gutenberg py and JW py all
+    pop up menus need to have the font size option added... I need to
+    change font sometimes and it's difficult"): "Font Size +"/"Font
+    Size -" added to every branch -- same app.fonts.bigger()/smaller()
+    mutators the reading-view MENU_ITEMS and the Library screen's L/R
+    hotkey already use, just reachable from here too now. Also added
+    for video specifically: "Fit/Fill Screen", the same app.video_
+    fill_screen toggle that used to live only in the separate Video
+    Settings screen."""
     items = []
     if app.dl_is_video:
         items += ["Stream", "Download", "Play All", "Shuffle All", "Search"]
+        fill_label = "Fill (stretch)" if app.video_fill_screen else "Fit (preserve aspect ratio)"
+        items.append(f"Screen Scaling: {fill_label}")
     elif app.dl_is_audio:
         items += ["Play", "Download", "Play All", "Shuffle All"]
+        # v26.07.23.01 (Kaleb's request): "Download All" -- only for the
+        # real music categories (Original Songs, Sing Out Joyfully
+        # mixes, Sing to Jehovah--Chorus, Children's Songs, Kingdom
+        # Melodies -- see AUDIO_SOURCES' "music_category" flag in
+        # jw_fetch.py), not Watchtower Study Audio or Bible Reading
+        # Audio, which aren't song catalogs to bulk-grab.
+        if (app._current_audio_source
+                and app._current_audio_source.get("music_category")):
+            items.append("Download All")
     else:
         items.append("Download")
         if (getattr(app.dl_plugin, "SUPPORTS_SEARCH", False)
@@ -15706,6 +17511,10 @@ def _download_browse_menu_items(app):
             items.append("Search")
         if getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
             items.append("Enter Pub Code")
+    items.append("Font Size +")
+    items.append("Font Size -")
+    items.append("Library")  # v26.07.24.04 (Kaleb's request)
+    items.append("Exit App")           # v26.07.24.04 (Kaleb's request)
     items.append("Back")
     return items
 
@@ -15861,6 +17670,79 @@ def _draw_static_scroll_overlay(renderer, app, title, paragraphs, scroll_attr):
     draw_hint(renderer, app.fonts, hint)
 
 
+def _download_quick_menu_items(app):
+    """v26.07.24.05 (Kaleb's correction: "never asked for START... pop
+    up menu was always X and that's where those new features should
+    have been added" -- X is now the shared open-menu button on all
+    six picker screens, same as everywhere else in the app, instead of
+    the v26.07.24.04 draft's separate START binding). "Help" is only
+    offered on SCREEN_DOWNLOAD_SOURCES/CATEGORIES -- the two screens
+    that already had a direct X->Help binding before this menu existed
+    -- so nothing that was reachable before became unreachable, and
+    nothing NEW (Help was never available on the other four screens)
+    gets silently added along with Library/Exit App.
+
+    v26.07.24.06 (Kaleb's follow-up: "were those pop up menus supposed
+    to have font size controls... is that still there?"): "Font Size
+    +"/"Font Size -" added here too, matching _download_browse_menu_
+    items()'s own v26.07.23.30 convention exactly (same app.fonts.
+    bigger()/smaller() mutators, same status-message wording). L/R
+    still works as a direct hotkey on the underlying picker screen
+    itself (font_size_hotkey(), unchanged) -- these two items are for
+    consistency with the BROWSE popup's own menu, which already lists
+    Font Size explicitly rather than relying on the hotkey being
+    discoverable only via the hint bar."""
+    items = []
+    if app.dl_quick_menu_return_screen in (SCREEN_DOWNLOAD_SOURCES, SCREEN_DOWNLOAD_CATEGORIES):
+        items.append("Help")
+    items += ["Font Size +", "Font Size -", "Library", "Exit App", "Back"]
+    return items
+
+
+def draw_download_quick_menu(renderer, app):
+    """v26.07.24.04 (Kaleb's request: "Return to Library and Exit App
+    on all the Gutenberg and JW popup menus... just like reader mode
+    -- especially JW.py because there are a lot of subcategories, to
+    just exit the app or get back to library I have to press B a
+    lot"), corrected in v26.07.24.05 (Kaleb: "never asked for START...
+    pop up menu was always X") to open via X, folding the pre-existing
+    Help binding into this same menu on the two screens that had it --
+    see _download_quick_menu_items()'s own docstring. Same real
+    overlay-panel popup pattern as draw_download_browse_menu() (draws
+    the correct underlying picker screen first, then a MENU panel on
+    top)."""
+    if app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_SOURCES:
+        draw_download_sources(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_CATEGORIES:
+        draw_download_categories(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
+        draw_download_video_sources(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_VIDEO_SERIES:
+        draw_download_video_series(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
+        draw_download_audio_sources(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
+        draw_download_audio_books(renderer, app)
+    items = _download_quick_menu_items(app)
+    overlay_w = _sx(320)
+    fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
+    render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    row_h = _row_h(app.fonts.ui_body)
+    top = _sy(76)
+    item_max_w = overlay_w - _sx(40)
+    for i, item in enumerate(items):
+        y = top + i * row_h
+        if i == app.download_quick_menu_index:
+            fill_rect(renderer, SW - overlay_w + _sx(10), y - _sy(2),
+                      overlay_w - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.download_quick_menu_index else COL_TEXT
+        text_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+        text_y = y + max(0, (row_h - _sy(4) - text_h) // 2)
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, item, item_max_w),
+                    color, SW - overlay_w + _sx(24), text_y)
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
+
+
 def draw_licenses(renderer, app):
     _draw_static_scroll_overlay(renderer, app, "CREDITS / LICENSE",
                                  LICENSE_PARAGRAPHS, "licenses_scroll")
@@ -15891,12 +17773,12 @@ def draw_download_categories(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.dl_cat_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, cat, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    hint_parts = ["UP/DOWN Select", "L/R Jump 10"]
+    hint_parts = ["UP/DOWN Select", "LEFT/RIGHT Jump 10", "L/R Font Size"]
     if getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
         hint_parts.append("Y Search")
     if getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
         hint_parts.append("SELECT Code")
-    hint_parts += ["A Open", "X Help", "B Back"]
+    hint_parts += ["A Open", "X Menu", "B Back"]
     draw_hint(renderer, app.fonts, "   ".join(hint_parts))
 
 
@@ -15918,7 +17800,7 @@ def draw_download_sources(renderer, app):
         color = COL_ACCENT if i == app.dl_source_index else COL_TEXT
         name = getattr(plugin, "PLUGIN_NAME", plugin.__name__)
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   X Help   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
 def draw_download_video_sources(renderer, app):
@@ -15941,7 +17823,7 @@ def draw_download_video_sources(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.video_source_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, VIDEO_SOURCE_ITEMS[i], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
 def draw_download_audio_sources(renderer, app):
@@ -15964,7 +17846,7 @@ def draw_download_audio_sources(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.audio_source_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, AUDIO_SOURCE_ITEMS[i], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
 def draw_download_audio_books(renderer, app):
@@ -15990,7 +17872,7 @@ def draw_download_audio_books(renderer, app):
         color = COL_ACCENT if i == app.audio_book_index else COL_TEXT
         _, name = books[i]
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
 def draw_download_video_series(renderer, app):
@@ -16020,7 +17902,7 @@ def draw_download_video_series(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.video_series_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, subs[i]["label"], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
 def draw_download_browse(renderer, app):
@@ -16035,6 +17917,12 @@ def draw_download_browse(renderer, app):
         title += f'  -- "{app.dl_query}"'
     if app.dl_page > 1:
         title += f"  (page {app.dl_page})"
+    if app.dl_offline_local:
+        # v26.07.23.03: makes clear this list came from what's already
+        # on the SD card, not a live fetch -- without this it would
+        # look like a normal successful category load with no hint
+        # that Download/Search/further browsing won't work right now.
+        title += "  [OFFLINE -- downloaded only]"
     # v26.07.12.09: was a single unwrapped render_text() call -- Kaleb's
     # loading-screen wrap audit turned this up as a related, more severe
     # bug: unlike the loading messages (which only overflowed at large
@@ -16198,6 +18086,59 @@ def draw_download_browse(renderer, app):
     draw_hint(renderer, app.fonts, hint)
 
 
+def draw_library_delete_folder(renderer, app):
+    """v26.07.23.07 (Kaleb's request): simple list picker for "Delete
+    Folder" -- same layout pattern as draw_download_audio_sources()
+    just above. Lists every top-level folder under LIBRARY_DIR
+    (list_library_folders()) -- both app-created category folders and
+    anything a person made manually. Two-press confirm (armed/
+    unarmed), same safety pattern as "Delete Book"; only allows
+    deleting a folder that's genuinely empty (checked live at button-
+    press time, not cached here) to avoid silently destroying books."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "DELETE FOLDER", COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    # v26.07.23.17 BUG FIX (found during a cosmetic-UI audit): rows here
+    # used to render the raw label with NO width limit at all -- every
+    # other similar list screen in this codebase either has short, fixed
+    # labels (draw_download_audio_sources() etc., safe without _fit_text)
+    # or explicitly truncates (draw_download_browse_menu()). This screen
+    # is neither: folder names are real, unbounded text (a person's own
+    # typed name, or a long category name like "Sing Out Joyfully to
+    # Jehovah-Instrumental", 42+ characters) PLUS a 30-character "press A
+    # again to confirm" suffix appended when armed -- confirmed this
+    # combination would run well past the screen edge, especially at a
+    # larger Font Size setting, with nothing to stop it. Now truncated
+    # with the same _fit_text() ellipsis convention used everywhere else
+    # dynamic-length text meets a fixed-width row.
+    row_max_w = SW - _sx(48)
+    folders = list_library_folders()
+    if not folders:
+        render_text(renderer, app.fonts.ui_body, "No folders yet.", COL_DIM, _sx(24), top)
+    else:
+        n_items = len(folders)
+        idx = min(app.lib_delete_folder_index, n_items - 1)
+        visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+        start = max(0, min(idx - visible // 2, max(0, n_items - visible)))
+        for i in range(start, min(n_items, start + visible)):
+            y = top + (i - start) * row_h
+            if i == idx:
+                fill_rect_rounded(renderer, _sx(10), int(y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            color = COL_ACCENT if i == idx else COL_TEXT
+            label = folders[i]
+            if i == idx and app._menu_delete_folder_armed:
+                label += "  -- press A again to confirm"
+            label = _fit_text(app.fonts.ui_body, label, row_max_w)
+            render_text(renderer, app.fonts.ui_body, label, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
+    hint = "UP/DOWN Select   A Delete (2x)   B Back" if folders else "B Back"
+    draw_hint(renderer, app.fonts, hint)
+
+
 def draw_library_menu(renderer, app):
     draw_library(renderer, app)
     # v26.07.21.16: same per-minute clock refresh as draw_menu() above.
@@ -16239,7 +18180,7 @@ def draw_library_menu(renderer, app):
         if item == "Mark Finished/Unfinished":
             tgt = app._menu_target_book
             if tgt:
-                is_finished = tgt["filename"] in app.finished
+                is_finished = tgt["relpath"] in app.finished
                 label = f"{'Mark Unfinished' if is_finished else 'Mark Finished'}: {tgt['title']}"
             else:
                 label = "Mark Finished/Unfinished"
@@ -17259,8 +19200,47 @@ def main():
                     app.set_status(f"Exiting Pico Reader {FACE_DONE}", duration=EXIT_TOAST_SECONDS)
                     SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
                     SDL.SDL_RenderClear(renderer)
+                    # v26.07.24.07 BUG FIX (Kaleb's request: "make sure
+                    # the exit toast shows for Exit App" -- prompted a
+                    # re-check after adding "Exit App" to the two new
+                    # download-flow popups). This used to be a plain
+                    # binary check (SCREEN_LIBRARY vs "else, assume
+                    # reader") -- true when only Library's B-quit and
+                    # the Reader menu's Exit App existed, but "Exit App"
+                    # in SCREEN_DOWNLOAD_BROWSE_MENU/SCREEN_DOWNLOAD_
+                    # QUICK_MENU (v26.07.24.01/.05) never resets
+                    # app.screen before setting quit_requested -- it
+                    # stays on whichever download popup fired it, which
+                    # isn't SCREEN_LIBRARY, so it was silently falling
+                    # into the "else: draw_reader()" branch and showing
+                    # a stale/wrong reader frame behind the toast
+                    # instead of the actual screen being exited from.
+                    # Same "show just the underlying screen, without
+                    # the now-closing popup" convention as the existing
+                    # SCREEN_MENU case just below (draw_reader() only,
+                    # skipping draw_menu()'s own overlay) -- draws each
+                    # popup's OWN underlying screen directly rather than
+                    # the popup-plus-overlay draw_download_browse_menu()/
+                    # draw_download_quick_menu() functions.
                     if app.screen == SCREEN_LIBRARY:
                         draw_library(renderer, app)
+                    elif app.screen == SCREEN_DOWNLOAD_BROWSE_MENU:
+                        draw_download_browse(renderer, app)
+                    elif app.screen == SCREEN_DOWNLOAD_QUICK_MENU:
+                        if app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_SOURCES:
+                            draw_download_sources(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_CATEGORIES:
+                            draw_download_categories(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
+                            draw_download_video_sources(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_VIDEO_SERIES:
+                            draw_download_video_series(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
+                            draw_download_audio_sources(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
+                            draw_download_audio_books(renderer, app)
+                        else:
+                            draw_reader(renderer, app)  # defensive fallback
                     else:
                         draw_reader(renderer, app)
                     # v26.07.16.34 BUG FIX (Kaleb's report -- "no text in
@@ -17444,6 +19424,8 @@ def main():
                 draw_storage(renderer, app)
             elif app.screen == SCREEN_LIBRARY_MENU:
                 draw_library_menu(renderer, app)
+            elif app.screen == SCREEN_LIBRARY_DELETE_FOLDER:
+                draw_library_delete_folder(renderer, app)
             elif app.screen == SCREEN_THEME_MENU:
                 draw_theme_menu(renderer, app)
             elif app.screen == SCREEN_VIDEO_SETTINGS:
@@ -17466,6 +19448,31 @@ def main():
                 draw_download_video_series(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
                 draw_download_browse(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_QUICK_MENU:
+                draw_download_quick_menu(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_BROWSE_MENU:
+                # v26.07.23.23 BUG FIX (Kaleb's report: "pressing X does
+                # nothing, no pop up menu" / "the pop up is black
+                # screen"): draw_download_browse_menu() has existed
+                # since this popup menu system was first built
+                # (v26.07.21.42, well before this session) and the
+                # button handler correctly sets app.screen to this
+                # value on X -- but the render dispatch itself never
+                # had a matching branch to actually CALL the draw
+                # function. Every screen this popup was ever supposed
+                # to cover (any JW or Gutenberg item-browse list) was
+                # affected identically: pressing X changed the screen
+                # state correctly, but nothing ever got drawn for it,
+                # leaving whatever the base clear color is (black) with
+                # nothing painted on top -- indistinguishable from a
+                # crash without checking process state, exactly
+                # matching what Kaleb saw. This is why none of this
+                # session's own testing ever caught it: every menu-
+                # content/dispatch test exercised the LOGIC in
+                # isolation (which items appear, what pressing A does),
+                # never the actual SDL render call chain, since real
+                # SDL rendering can't run in this sandbox at all.
+                draw_download_browse_menu(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_HELP:
                 draw_download_help(renderer, app)
             elif app.screen == SCREEN_LICENSES:
@@ -17705,6 +19712,46 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     # first press -- arm it, same two-press-confirm safety
                     # the old Library-screen SELECT delete used
                     app._menu_delete_armed = True
+            elif choice == "New Folder":
+                # v26.07.23.07 (Kaleb's request): simple text-entry ->
+                # os.makedirs. Auto-capitalizes each word as you type
+                # (see SCREEN_TEXT_ENTRY's char-append handler) so a
+                # typical folder name reads naturally without a shift
+                # key. Sanitized the same way category-download
+                # folders already are (sanitize_folder_name(), reusing
+                # jw_fetch.py's shared utility) so a typed name can
+                # never contain a character FAT32/exFAT would reject.
+                def _on_new_folder_confirm(app, value):
+                    name = (value or "").strip()
+                    if not name:
+                        app.set_status("Folder name can't be empty")
+                        return
+                    sanitizer = getattr(JW_PLUGIN, "sanitize_folder_name", None)
+                    safe_name = sanitizer(name) if sanitizer else name
+                    target = os.path.join(LIBRARY_DIR, safe_name)
+                    already_existed = os.path.isdir(target)
+                    try:
+                        os.makedirs(target, exist_ok=True)
+                        # v26.07.23.08 BUG FIX (found during folder-
+                        # management audit): exist_ok=True makes this a
+                        # silent no-op when the folder was already
+                        # there (e.g. typing a name that title-cases to
+                        # the same result as an existing folder) -- but
+                        # the message always said "Created" regardless,
+                        # even when nothing was actually created.
+                        if already_existed:
+                            app.set_status(f'"{safe_name}" already exists')
+                        else:
+                            app.set_status(f'Created folder "{safe_name}"')
+                    except OSError as e:
+                        app.set_status(f"Couldn't create folder: {e}")
+                app.open_text_entry("New Folder Name", "", _on_new_folder_confirm,
+                                     SCREEN_LIBRARY_MENU,
+                                     hint="e.g. My Own Folder", autocap=True)
+            elif choice == "Delete Folder":
+                app.lib_delete_folder_index = 0
+                app._menu_delete_folder_armed = False
+                app.screen = SCREEN_LIBRARY_DELETE_FOLDER
             elif choice == "Themes...":
                 app.theme_menu_index = 0
                 app._theme_menu_return_screen = SCREEN_LIBRARY_MENU
@@ -17727,6 +19774,44 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.screen = SCREEN_STORAGE
             elif choice == "Back":
                 app.screen = SCREEN_LIBRARY
+
+    elif app.screen == SCREEN_LIBRARY_DELETE_FOLDER:
+        # v26.07.23.07 (Kaleb's request): same two-press-confirm safety
+        # as "Delete Book". Deliberately only allows deleting a folder
+        # that's genuinely empty (checked live right here, not cached --
+        # a folder could gain a book between opening this screen and
+        # pressing A) to avoid silently destroying downloaded/personal
+        # books. A non-empty folder just gets a clear status message
+        # instead of being force-deleted -- "keep it simple" per
+        # Kaleb's own framing of this feature, no bulk-move-books flow.
+        folders = list_library_folders()
+        n = len(folders)
+        if btn == "UP":
+            app.lib_delete_folder_index = (app.lib_delete_folder_index - 1) % n if n else 0
+            app._menu_delete_folder_armed = False
+        elif btn == "DOWN":
+            app.lib_delete_folder_index = (app.lib_delete_folder_index + 1) % n if n else 0
+            app._menu_delete_folder_armed = False
+        elif btn == "B":
+            app._menu_delete_folder_armed = False
+            app.screen = SCREEN_LIBRARY_MENU
+        elif btn == "A" and n:
+            name = folders[app.lib_delete_folder_index]
+            folder_path = os.path.join(LIBRARY_DIR, name)
+            if app._menu_delete_folder_armed:
+                try:
+                    if os.listdir(folder_path):
+                        app.set_status(f'"{name}" isn\'t empty -- move or delete its books first')
+                    else:
+                        os.rmdir(folder_path)
+                        app.set_status(f'Deleted folder "{name}"')
+                        app.lib_delete_folder_index = max(
+                            0, min(app.lib_delete_folder_index, len(list_library_folders()) - 1))
+                except OSError as e:
+                    app.set_status(f"Couldn't delete folder: {e}")
+                app._menu_delete_folder_armed = False
+            else:
+                app._menu_delete_folder_armed = True
 
     elif app.screen == SCREEN_THEME_MENU:
         n = len(THEME_MENU_ITEMS)
@@ -17812,8 +19897,8 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 save_settings({"video_stream_quality": app.video_stream_quality})
                 # stays open, same pattern as Theme +/- above
             elif choice == "Video Player":
-                _cycle = {"auto": "mpv", "mpv": "ffplay", "ffplay": "auto"}
-                app.video_player_pref = _cycle.get(app.video_player_pref, "auto")
+                _cycle = {"mpv": "ffplay", "ffplay": "mpv"}
+                app.video_player_pref = _cycle.get(app.video_player_pref, "ffplay")
                 save_settings({"video_player_pref": app.video_player_pref})
                 # stays open, same pattern as Theme +/- above
             elif choice == "Back":
@@ -17853,23 +19938,34 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         elif btn == "A" and DOWNLOAD_PLUGINS:
             app.open_downloader(DOWNLOAD_PLUGINS[app.dl_source_index])
         elif btn == "X":
-            app.dl_help_return_screen = SCREEN_DOWNLOAD_SOURCES
-            app.dl_help_scroll = 0
-            app.screen = SCREEN_DOWNLOAD_HELP
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_SOURCES
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+        elif app.font_size_hotkey(btn):
+            pass
 
     elif app.screen == SCREEN_DOWNLOAD_CATEGORIES:
         categories = getattr(app.dl_plugin, "CATEGORIES", [])
         n = len(categories)
         if btn == "UP": app.dl_cat_index = (app.dl_cat_index - 1) % n if n else 0
         elif btn == "DOWN": app.dl_cat_index = (app.dl_cat_index + 1) % n if n else 0
-        elif btn == "R" and n:
+        elif btn == "RIGHT" and n:
             # v0.1.88: jump ~10 items at a time -- Kaleb's request, since
             # some plugins' CATEGORIES lists (JW back-issue categories,
             # Gutenberg's 17-entry picker) are long enough that one-at-a-
             # time UP/DOWN got tedious once these became full scrollable
             # lists instead of the old paged browsing.
+            #
+            # v26.07.23.32 (Kaleb's request: "make those L1 R1 font
+            # size... the 6th screen we should modify jump 10 items
+            # with the left and right d pad... and make the l and r
+            # font"): moved from the L/R shoulder buttons to the D-pad's
+            # own LEFT/RIGHT (confirmed genuinely free here, this
+            # screen never used them) so L/R can join the other five
+            # download-flow screens' font_size_hotkey() convention
+            # instead, all six now consistent.
             app.dl_cat_index = min(app.dl_cat_index + 10, n - 1)
-        elif btn == "L" and n:
+        elif btn == "LEFT" and n:
             app.dl_cat_index = max(app.dl_cat_index - 10, 0)
         elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
             # v26.07.09.11: Search used to only be reachable AFTER opening
@@ -17902,6 +19998,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     app.dl_page = 1
                     app.dl_has_next = False
                     app.dl_load_error = None
+                    app.dl_offline_local = False  # v26.07.23.03: clear stale banner
                     app.dl_index = 0
                     app.te_checking = False
                     app.screen = SCREEN_DOWNLOAD_BROWSE
@@ -17949,9 +20046,11 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             else:
                 app.open_category(chosen)
         elif btn == "X":
-            app.dl_help_return_screen = SCREEN_DOWNLOAD_CATEGORIES
-            app.dl_help_scroll = 0
-            app.screen = SCREEN_DOWNLOAD_HELP
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_CATEGORIES
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+        elif app.font_size_hotkey(btn):
+            pass
 
     elif app.screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
         n = len(VIDEO_SOURCE_ITEMS)
@@ -17981,6 +20080,10 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                         return
                     app.dl_plugin = JW_PLUGIN
                     app.dl_is_video = True
+                    app._current_video_source = None  # search results are
+                                                        # never one stable
+                                                        # category to file
+                                                        # downloads under
                     app.dl_category = None
                     app._dl_video_all_items = items
                     app.dl_items = items
@@ -17989,6 +20092,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     app.dl_query = query
                     app.dl_has_next = False
                     app.dl_load_error = None
+                    app.dl_offline_local = False  # v26.07.23.03: clear stale banner
                     app.te_checking = False
                     app.screen = SCREEN_DOWNLOAD_BROWSE
                     app.dirty = True
@@ -18002,11 +20106,21 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.screen = SCREEN_DOWNLOAD_VIDEO_SERIES
             elif source:
                 app._pending_video_source = None
+                app._current_video_source = source  # v26.07.23.03: used for
+                                                       # the ROMS/movies
+                                                       # subfolder name and
+                                                       # offline fallback
                 app.open_plugin_video_list(source["loader"], **source.get("args", {}))
             else:
                 # choice == "Back", or (defensive) an unrecognized label --
                 # either way, there's nothing to open.
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
+        elif btn == "X":
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+        elif app.font_size_hotkey(btn):
+            pass
 
     elif app.screen == SCREEN_DOWNLOAD_VIDEO_SERIES:
         # v26.07.15.09: sub-picker for VIDEO_SOURCES entries marked
@@ -18035,6 +20149,9 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         elif btn == "B": app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
         elif btn == "A" and n:
             sub = subs[app.video_series_index]
+            app._current_video_source = sub  # v26.07.23.03: leaf entry is
+                                               # the folder name, not the
+                                               # parent "Series" source
             if "loader" in sub:
                 app.open_plugin_video_list(sub["loader"], **sub.get("args", {}))
             else:
@@ -18042,6 +20159,12 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 args["key"] = sub["key"]
                 args["title"] = sub["label"]
                 app.open_plugin_video_list(source["loader"], **args)
+        elif btn == "X":
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_VIDEO_SERIES
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+        elif app.font_size_hotkey(btn):
+            pass
 
     elif app.screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
         # v26.07.10.01/.02: same shape as SCREEN_DOWNLOAD_VIDEO_SOURCES
@@ -18085,6 +20208,8 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     app.dl_plugin = JW_PLUGIN
                     app.dl_is_audio = True
                     app._pending_audio_source = None
+                    app._current_audio_source = None  # search results are
+                                                        # never a music_category
                     app.dl_category = None
                     app.dl_items = items
                     app.dl_index = 0
@@ -18092,6 +20217,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     app.dl_query = query
                     app.dl_has_next = False
                     app.dl_load_error = None
+                    app.dl_offline_local = False  # v26.07.23.03: clear stale banner
                     app.te_checking = False
                     app.screen = SCREEN_DOWNLOAD_BROWSE
                     app.dirty = True
@@ -18101,14 +20227,30 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                                      hint='e.g. "love", "faith", "psalm"')
             elif source and source.get("books"):
                 app._pending_audio_source = source
+                app._current_audio_source = source  # Bible Reading Audio
+                                                       # isn't a music_category
+                                                       # either, but keep this
+                                                       # consistent so both
+                                                       # tracking vars always
+                                                       # agree on "which source"
                 app.audio_book_index = 0
                 app.screen = SCREEN_DOWNLOAD_AUDIO_BOOKS
             elif source:
                 app._pending_audio_source = None
+                app._current_audio_source = source  # v26.07.23.01: remembered
+                                                       # for the "Download All"
+                                                       # menu-item check (see
+                                                       # _download_browse_menu_items())
                 app.open_plugin_audio_list(source["loader"], **source.get("args", {}))
             else:
                 # choice == "Back"
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
+        elif btn == "X":
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+        elif app.font_size_hotkey(btn):
+            pass
 
     elif app.screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
         # v26.07.10.01: Bible-book sub-picker -- only reachable via a
@@ -18128,6 +20270,12 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 args = dict(source.get("args", {}))
                 args["booknum"] = booknum
                 app.open_plugin_audio_list(source["loader"], **args)
+        elif btn == "X":
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_AUDIO_BOOKS
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+        elif app.font_size_hotkey(btn):
+            pass
 
     elif app.screen == SCREEN_DOWNLOAD_BROWSE:
         n = len(app.dl_items)
@@ -18332,19 +20480,47 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.screen = SCREEN_DOWNLOAD_BROWSE
         elif btn == "A":
             choice = items[app.download_browse_menu_index] if items else None
-            # Close the menu first -- most actions are screen-takeover
-            # (playback) or fire-and-forget (download); the two that
-            # open a text-entry box (Search/Enter Pub Code) already set
-            # their own target screen internally, so setting BROWSE
-            # here first is harmless for those too (immediately
-            # overwritten by open_text_entry()'s own screen change).
-            app.screen = SCREEN_DOWNLOAD_BROWSE
+            # Close the menu first -- every action here is screen-
+            # takeover (playback) or fire-and-forget (download); the
+            # two that open a text-entry box (Search/Enter Pub Code)
+            # already set their own target screen internally, so
+            # setting BROWSE here first is harmless for those too
+            # (immediately overwritten by open_text_entry()'s own
+            # screen change). v26.07.23.30: Font Size +/- and Screen
+            # Scaling are toggle/adjuster items, not close-and-go
+            # actions -- they need to STAY OPEN so the label updates
+            # live and can be pressed again without re-opening the
+            # menu each time, same "stays open" pattern Filter: Cycle
+            # already uses on SCREEN_LIBRARY_MENU.
+            stays_open = choice in ("Font Size +", "Font Size -") or (
+                choice is not None and choice.startswith("Screen Scaling:"))
+            if choice is not None and not stays_open:
+                app.screen = SCREEN_DOWNLOAD_BROWSE
             if choice == "Stream":
                 app.play_video_item(app.dl_index)
             elif choice == "Play":
                 app.play_audio_item(app.dl_index)
             elif choice == "Download":
                 app.start_download(app.dl_index)
+            elif choice == "Font Size +":
+                before = app.fonts.size_index
+                app.fonts.bigger()
+                pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
+                app.set_status(f"Font size: {pt}pt (largest)" if app.fonts.size_index == before
+                                else f"Font size: {pt}pt")
+            elif choice == "Font Size -":
+                before = app.fonts.size_index
+                app.fonts.smaller()
+                pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
+                app.set_status(f"Font size: {pt}pt (smallest)" if app.fonts.size_index == before
+                                else f"Font size: {pt}pt")
+            elif choice is not None and choice.startswith("Screen Scaling:"):
+                app.video_fill_screen = not app.video_fill_screen
+                save_settings({"video_fill_screen": app.video_fill_screen})
+                state = "Fill (stretch)" if app.video_fill_screen else "Fit (preserve aspect ratio)"
+                app.set_status(f"Video Scaling: {state}")
+            elif choice == "Download All":
+                app.start_download_all()
             elif choice == "Play All":
                 if app.dl_is_video:
                     app.play_video_queue_from(app.dl_index, shuffle=False)
@@ -18362,8 +20538,76 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     app.open_category_search_entry()
             elif choice == "Enter Pub Code":
                 app.open_pub_code_entry()
+            elif choice == "Library":
+                # v26.07.24.04 (Kaleb's request: "titles should match
+                # reader mode in functionality and text"): same body as
+                # the reader Menu's own "Library" choice (refresh_
+                # library/lib_index reset/flush_pin_finished_now), plus
+                # the download-plugin-specific clear_search_token_cache()
+                # cleanup SCREEN_DOWNLOAD_BROWSE's own "B" handler
+                # already does when leaving the plugin entirely -- no
+                # save_progress() here since there's no open book in
+                # this context, unlike the reader menu's version.
+                clear_fn = getattr(app.dl_plugin, "clear_search_token_cache", None)
+                if clear_fn:
+                    clear_fn()
+                flush_pin_finished_now()
+                app.refresh_library()
+                app.lib_index = 0
+                app.screen = SCREEN_LIBRARY
+            elif choice == "Exit App":
+                app.play_sound("error")  # v26.07.16.02: same exit cue as
+                                          # Library's own B-to-quit path
+                app.quit_requested = True
             # "Back" and any unmatched choice: already returned to
             # SCREEN_DOWNLOAD_BROWSE above, nothing further to do.
+
+    elif app.screen == SCREEN_DOWNLOAD_QUICK_MENU:
+        # v26.07.24.06 (Kaleb's follow-up: "were those pop up menus
+        # supposed to have font size controls... is that still
+        # there?"): Font Size +/- added, same "stays open" pattern as
+        # SCREEN_DOWNLOAD_BROWSE_MENU's own handling of the identical
+        # two items -- see _download_quick_menu_items()'s own docstring.
+        items = _download_quick_menu_items(app)
+        n = len(items)
+        if btn == "UP":
+            app.download_quick_menu_index = (app.download_quick_menu_index - 1) % n
+        elif btn == "DOWN":
+            app.download_quick_menu_index = (app.download_quick_menu_index + 1) % n
+        elif btn == "B":
+            app.screen = app.dl_quick_menu_return_screen
+        elif btn == "A":
+            choice = items[app.download_quick_menu_index]
+            stays_open = choice in ("Font Size +", "Font Size -")
+            if choice == "Font Size +":
+                before = app.fonts.size_index
+                app.fonts.bigger()
+                pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
+                app.set_status(f"Font size: {pt}pt (largest)" if app.fonts.size_index == before
+                                else f"Font size: {pt}pt")
+            elif choice == "Font Size -":
+                before = app.fonts.size_index
+                app.fonts.smaller()
+                pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
+                app.set_status(f"Font size: {pt}pt (smallest)" if app.fonts.size_index == before
+                                else f"Font size: {pt}pt")
+            elif choice == "Help":
+                app.dl_help_return_screen = app.dl_quick_menu_return_screen
+                app.dl_help_scroll = 0
+                app.screen = SCREEN_DOWNLOAD_HELP
+            elif choice == "Library":
+                clear_fn = getattr(app.dl_plugin, "clear_search_token_cache", None)
+                if clear_fn:
+                    clear_fn()
+                flush_pin_finished_now()
+                app.refresh_library()
+                app.lib_index = 0
+                app.screen = SCREEN_LIBRARY
+            elif choice == "Exit App":
+                app.play_sound("error")
+                app.quit_requested = True
+            elif not stays_open:  # "Back"
+                app.screen = app.dl_quick_menu_return_screen
 
     elif app.screen == SCREEN_DOWNLOAD_HELP:
         if btn == "UP":
@@ -18432,7 +20676,22 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         elif btn == "A" and not app.te_checking:
             label, kind = rows[app.te_row][app.te_col]
             if kind == "char":
-                app.te_value += label
+                # v26.07.23.07 (Kaleb's request: "keyboard should just
+                # auto capitalize the letter of each word after a
+                # space" for the New Folder feature -- explicitly
+                # scoped via app.te_autocap, NOT applied globally, per
+                # Kaleb's own follow-up concern that always doing this
+                # could cause search-matching problems. Only New
+                # Folder's open_text_entry() call passes autocap=True;
+                # every other caller (Search Audio/Videos/Gutenberg,
+                # pub code entry, theme naming) is completely
+                # unaffected and behaves exactly as before this existed.
+                if app.te_autocap and (not app.te_value or app.te_value.endswith(" ")):
+                    app.te_value += label
+                elif app.te_autocap:
+                    app.te_value += label.lower()
+                else:
+                    app.te_value += label
                 app.te_error = None
             elif kind == "space":
                 app.te_value += " "
@@ -18929,13 +21188,13 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 save_settings({"video_stream_quality": app.video_stream_quality})
                 app.set_status(f"Streaming Quality: {app.video_stream_quality}")
             elif action == "Video Player" and native_video is not None:
-                _cycle = {"auto": "mpv", "mpv": "ffplay", "ffplay": "auto"}
-                app.video_player_pref = _cycle.get(app.video_player_pref, "auto")
+                _cycle = {"mpv": "ffplay", "ffplay": "mpv"}
+                app.video_player_pref = _cycle.get(app.video_player_pref, "ffplay")
                 save_settings({"video_player_pref": app.video_player_pref})
                 app.set_status(f"Video Player: {app.video_player_pref.capitalize()}")
             elif action == "Audio Player" and native_video is not None:
-                _cycle = {"auto": "mpv", "mpv": "ffplay", "ffplay": "auto"}
-                app.audio_player_pref = _cycle.get(app.audio_player_pref, "auto")
+                _cycle = {"mpv": "ffplay", "ffplay": "mpv"}
+                app.audio_player_pref = _cycle.get(app.audio_player_pref, "ffplay")
                 save_settings({"audio_player_pref": app.audio_player_pref})
                 app.set_status(f"Audio Player: {app.audio_player_pref.capitalize()}")
             elif action == "Toggle Open Last Book on Launch":

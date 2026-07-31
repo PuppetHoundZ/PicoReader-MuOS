@@ -6,7 +6,7 @@ canvas-height table -- RG34XX/RG34XX SP (3:2, native, no bars),
 RG28XX/RG35XX/RG40XX and TrimUI Brick (4:3, exact match, no bars),
 TrimUI Smart Pro (16:9, matched to 3:2, pillarboxed) -- SW stays a
 fixed 720 throughout; render filtering uses SDL2's default (nearest)
-uniformly on every device, no scale-quality hint set, v26.07.24.07)
+uniformly on every device, no scale-quality hint set, v26.07.27.14)
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
@@ -65,3415 +65,907 @@ scrolled to your current reading position, not always the top of the list.
 
 ===========================================================================
 AI NOTES -- read this first if you're a future Claude session picking this
-project back up. This describes the CURRENT build only (v26.07.24.07).
-
-EXIT-TOAST PRE-RENDER MISSED THE TWO NEW DOWNLOAD-FLOW QUIT SOURCES
-(v26.07.24.07 BUG FIX, Kaleb's request: "bug check, make sure the exit
-toast shows for Exit App"): the quit_requested toast block (main loop,
-right after handle_button()) picks which screen to draw ONE frame of
-behind the "Exiting Pico Reader" toast -- it used to be a plain binary
-check (SCREEN_LIBRARY vs "else, assume reader"), correct back when only
-Library's B-quit and the Reader menu's Exit App existed and neither of
-the new download-flow "Exit App" choices (SCREEN_DOWNLOAD_BROWSE_MENU/
-SCREEN_DOWNLOAD_QUICK_MENU, v26.07.24.01/.05) reset app.screen before
-setting quit_requested -- it stays on whichever popup fired it, so it
-was silently falling into the "else: draw_reader()" branch, which
-would draw a stale/wrong (or entirely absent) book page behind the
-toast instead of the actual download screen being exited from. Fixed
-with explicit branches for both, each drawing its own underlying
-picker screen directly (same "show just the screen underneath, without
-the now-closing popup" convention the existing SCREEN_MENU case
-already uses). All four real quit_requested=True sites in the file
-(Library B-quit, BROWSE_MENU Exit App, QUICK_MENU Exit App, Reader
-Menu Exit App) now confirmed covered by name, not by binary fallback.
-
-QUICK MENU: FONT SIZE +/- ADDED (v26.07.24.06, Kaleb's follow-up:
-"were those pop up menus supposed to have font size controls in
-Gutenberg and JW py... is that still there?"). Gap found: L/R still
-worked as a direct hotkey on all six picker screens (font_size_
-hotkey(), unchanged since v26.07.23.30/.32), but the new X-triggered
-SCREEN_DOWNLOAD_QUICK_MENU itself never listed "Font Size +"/"Font
-Size -" as items, unlike SCREEN_DOWNLOAD_BROWSE_MENU's own popup,
-which already does. Added to _download_quick_menu_items(), same
-app.fonts.bigger()/smaller() mutators and "stays open" (menu doesn't
-close on press, so the label/font updates live and can be pressed
-again) behavior as BROWSE_MENU's own identical items.
-
-QUICK MENU CORRECTED TO OPEN VIA X, NOT START (v26.07.24.05, Kaleb's
-correction: "never asked for START... pop up menu was always X and
-that's where those new features should have been added"). All six
-picker screens now open SCREEN_DOWNLOAD_QUICK_MENU via X, matching
-every other popup menu in the app (reader Menu, SCREEN_DOWNLOAD_
-BROWSE_MENU). SOURCES/CATEGORIES used to bind X directly to SCREEN_
-DOWNLOAD_HELP -- that's now folded into the quick menu as a "Help"
-item instead of a separate binding, via the new _download_quick_menu_
-items(app) helper (conditionally includes "Help" only for those two
-screens, so nothing reachable before became unreachable and nothing
-new leaked onto the other four, which never had a Help binding).
-VIDEO_SOURCES/VIDEO_SERIES/AUDIO_SOURCES/AUDIO_BOOKS had no X binding
-at all before this feature existed, so X was simply free there.
-
-LIBRARY/EXIT APP QUICK MENU FOR ALL DOWNLOAD-FLOW SCREENS
-(v26.07.24.04, Kaleb's request: "I want Return to Library and Exit App
-on all the Gutenberg and JW popup menus added just like reader mode...
-especially JW.py because there are a lot of sub categories, to just
-exit the app or access back to library I have to press B a lot" --
-labels/functionality then corrected to exactly match the reader
-Menu's own "Library"/"Exit App" items, and confirmed it needed to stay
-a real popup, not a bare hotkey, "for consistency"): new SCREEN_
-DOWNLOAD_QUICK_MENU, a minimal two-item overlay popup (Library / Exit
-App / Back) reachable via START from all six source/category picker
-screens (SOURCES, CATEGORIES, VIDEO_SOURCES, VIDEO_SERIES, AUDIO_
-SOURCES, AUDIO_BOOKS) -- START confirmed free on all six. draw_
-download_quick_menu() draws the correct underlying picker screen first
-(via app.dl_quick_menu_return_screen), then the same overlay-panel
-style as the existing SCREEN_DOWNLOAD_BROWSE_MENU. SCREEN_DOWNLOAD_
-BROWSE already had its own real popup -- "Library"/"Exit App" were
-added directly into _download_browse_menu_items()'s existing list
-instead of a second overlay there. Both "Library" choices call the
-exact same body as the reader Menu's own "Library" item (refresh_
-library()/lib_index=0/flush_pin_finished_now()), plus the download-
-plugin-specific clear_search_token_cache() cleanup SCREEN_DOWNLOAD_
-BROWSE's "B" handler already does when leaving the plugin entirely --
-no save_progress() here, unlike the reader version, since there's no
-open book in this context. "Exit App" matches Library's own B-to-quit
-cue (play_sound("error") + quit_requested=True) exactly.
-NOT YET CONFIRMED ON REAL HARDWARE.
-
-VIDEO D-PAD UP/DOWN: BRIGHTNESS REPLACED, AUDIO QUEUE CARD DROPPED,
-UINPUT REGISTRATION BUG FIX (v26.07.24.02-.03, Kaleb's on-device
-reports): three related fixes in native_video.py/main.py:
-
-(1) AUDIO queue transitions (play_audio_queue_from) no longer draw a
-custom "Now Playing" title card between tracks -- mpv already shows
-the track title natively via --osd-playing-msg=${media-title}
-(_MPV_AUDIO_ARGS), so the card was pure redundancy there; ffplay has
-no on-screen title capability at all, so it never worked on that path
-either way. on_track_change now just does the same plain blank
-double-clear+present used everywhere else at the mpv/ffplay display-
-handoff boundary. VIDEO (play_video_queue_from) KEEPS its title card
-(double-presented, see the v26.07.24.01 entry below) since neither
-player shows any title on-screen for video -- no native fallback there.
-
-(2) D-pad Up/Down on VIDEO used to control mpv's live `brightness`
-property (Kaleb: "does absolutely nothing"). Root cause: muOS's own
-real mpv invocation (github.com/MustardOS/internal, script/launch/
-ext-mpv.sh) sets no --vo override, so mpv auto-selects hardware video
-decode on this SoC, and brightness/contrast/saturation/gamma all run
-through a software color-equalizer stage hwdec frequently bypasses --
-a known mpv limitation, not fixable from this app, and one that rules
-out every other eq-family property as a replacement too. Replaced with
-two properties outside the color pipeline entirely: UP toggles the
-title/progress OSD staying on screen (KEY_G, cycle-values osd-level 1
-3 -- reuses the exact same real property audio's own D-pad UP already
-used), DOWN toggles mute (new KEY_M, 'm' -- genuinely native "toggle
-mute" on BOTH mpv and ffplay, confirmed via ffplay.c's own toggle_mute/
-SDLK_m handler, not just a coincidental no-op like some other shared
-keys here). Brightness (KEY_BRIGHTNESS_DOWN/UP, i/o) fully removed.
-
-(3) BUG FOUND while wiring up KEY_M: VirtualKeyboard.create()'s
-UI_SET_KEYBIT registration loop never included KEY_G/KEY_V at all --
-audio's own D-pad Up/Down title/album-art toggle (shipped v26.07.23.26/
-.28) was very likely silently non-functional on real hardware this
-whole time, same "button does nothing" symptom as (2) but from an
-unrelated cause (a uinput virtual device only reliably delivers key
-codes it declared capability for at creation time). Fixed by adding
-KEY_G, KEY_V, KEY_M to the registration list.
-
-NOT YET CONFIRMED ON REAL HARDWARE: all three fixes above -- please
-retest audio Play All/Shuffle All (title card gone, no glitch), video
-Play All/Shuffle All (title card still shows, no glitch), and video's
-new D-pad Up (title/progress toggle) and Down (mute) bindings.
-
-QUEUE-TRANSITION VIDEO/AUDIO GLITCH FIX (v26.07.24.01, Kaleb's real
-on-device report: "in between each video, glitchy text shows up with
-the title of the next video just before it plays... looks like our
-PicoReader text is bleeding through"): play_video_queue_from()'s own
-_on_track_change() callback (the "Play All (2/8) <title>" card shown
-between queue items) was only drawing and presenting ONCE per
-transition. Same root cause already documented elsewhere in this file
-for the mpv/ffplay direct-display boundary: those players draw
-straight to the display, entirely outside this SDL renderer's dirty-
-rect tracking, so a single RenderPresent only guarantees ONE of the
-two swapchain buffers holds the new frame -- the other can still be
-showing the previous track's last raw video frame, producing exactly
-this alternating/torn "text bleeding through" look. Fix draws+presents
-the identical card twice, guaranteeing both buffers agree before
-play_jw_video() blocks on the next item. (v26.07.24.02 dropped this
-same pattern for AUDIO entirely -- see above.)
-
-JW AUDIO CATEGORIES EXPANDED TO REAL MUSIC SUB-CATEGORIES + DOWNLOAD ALL
-(v26.07.23.01, Kaleb's request from real JW Library app screenshots):
-AUDIO_SOURCES (jw_fetch.py) used to have one flat "Songbook -- Sing Out
-Joyfully to Jehovah" entry (pub "sjjm"). Confirmed live against the real
-mediator "Audio" container category (GET .../categories/E/Audio?
-detailed=1&clientType=www) that there are 7 real subcategories, not one:
-Original Songs, "Sing Out Joyfully" to Jehovah--Meetings/Vocals/
-Instrumental, Sing to Jehovah--Chorus, Children's Songs, Kingdom
-Melodies. All 7 now have their own AUDIO_SOURCES entry (new loader:
-list_mediator_audio_category(), the audio-shaped twin of
-list_mediator_category() -- single file per media entry, no rendition
-choice, unlike video). Checked for duplicates directly against jw.org's
-own tree -- none; the two songbooks share a couple of song titles
-(different eras, some songs carried over) but are genuinely separate
-catalogs. The 3 custom non-JW.org entries (Watchtower Study Audio,
-Bible Reading Audio, Search Audio) are deliberately kept as-is --
-useful conveniences, not part of jw.org's own category tree, not
-duplicates of anything.
-
-All 7 are flagged "music_category": True, which drives a new "Download
-All" action in the SCREEN_DOWNLOAD_BROWSE_MENU popup (App.
-start_download_all(), main.py) -- sequential background download of
-every item in the currently open category, skips already-downloaded
-files, not offered for Watchtower Study Audio/Bible Reading Audio
-(single-issue/single-book sources, not song catalogs). Tracked via a
-new app._current_audio_source (distinct from _pending_audio_source,
-which only ever gets set for "books": True sources) so the menu knows
-which AUDIO_SOURCES entry is open regardless of whether a book-picker
-was involved.
-
-BUG FIX (v26.07.23.02, found during Download All testing): start_
-download() (single-item, "A"/"Download") only checked _dl_downloading_
-idx, not _dl_all_running -- so pressing A on a track while Download All
-was mid-batch fired a second concurrent download thread, racing status_
-msg updates between the two loops exactly like this guard's own
-existing comment already warned against for two single downloads. Both
-download paths now share one "only one at a time" rule. Verified live:
-empty-category no-op, double-trigger blocked, one-broken-URL-among-many
-correctly reported as 1 failed/others fine, and a real partial-then-
-resume run only re-fetched the missing tracks.
-
-DOWNLOADS NOW ORGANIZED INTO PER-CATEGORY SUBFOLDERS + OFFLINE FALLBACK
-LISTING (v26.07.23.03, Kaleb's request, from his own real-device report
-that a category page failed to even load with no WiFi): downloads used
-to all land flat in ROMS/Music or ROMS/movies. App._category_dest_dir()
-(main.py) now returns base_dir/"Category Name" (JW_PLUGIN.
-sanitize_folder_name(), reusing the existing filename-sanitizer's
-character rules) whenever a real category is open -- tracked via new
-app._current_video_source, mirroring _current_audio_source exactly.
-start_download()/start_download_all() write into that subfolder
-(os.makedirs() first); _resolve_media_source() (used by every play_*
-method) checks that same subfolder when deciding whether to play a
-local copy instead of streaming. Search Videos/Search Audio results
-have no single stable category, so they're deliberately left flat
-(_current_*_source stays None for those) -- same as before.
-
-Separately, JW_PLUGIN.list_local_folder_items() (jw_fetch.py) scans a
-category's own subfolder directly off the SD card -- no network call.
-open_plugin_video_list()/open_plugin_audio_list() now fall back to it
-whenever the live fetch fails AND that category's subfolder has
-something in it, so a category you've already run Download All on (or
-even just partly grabbed) still shows those tracks/videos with zero
-internet, instead of a dead "Couldn't reach server" screen. Offline
-items carry no _audio_url/_video_url (nothing to re-fetch, this IS the
-local copy) -- Download/Download All on one of these just report
-"already downloaded" immediately (checked live: safe, no crash, no
-wasted network attempt, since download_audio()/download_video() check
-os.path.exists() before ever touching a URL). New app.dl_offline_local
-flag shows an "[OFFLINE -- downloaded only]" note in the title bar so
-this never looks like a normal successful live load. Verified live end-
-to-end: downloaded a real category into its subfolder, then simulated
-the network failing and confirmed the offline scan reconstructs the
-exact same list, and that playback correctly resolves to the local
-file inside that subfolder.
-
-Kaleb confirmed no backward-compatibility concern with pre-v26.07.23.03
-flat downloads -- wiping and starting fresh, so no flat-path fallback
-logic was added to _resolve_media_source() (would otherwise need to
-check two locations forever).
-
-SCREEN POWER BEHAVIOR DURING PLAYBACK -- LID/STANDBY TOGGLES
-(v26.07.23.12-.13, Kaleb's request: screen should dim during music,
-wake on button/lid-open, keep playing through a lid close, "like
-Songo#5" -- a real dedicated music player for these same handhelds,
-whose own developer confirmed relying on "the host cfw itself" for
-this exact kind of behavior rather than inventing anything custom):
-
-Source-confirmed (NOT guessed) via MustardOS/internal: RG34XX-SP/
-RG35XX-SP have a real hall-effect lid sensor; muOS's own hotkey.sh maps
-lid-close to the same SLEEP_LONG hotkey a long power-button-press uses,
-which calls a shared SLEEP() function that writes directly to /sys/
-power/state -- a genuine kernel suspend, freezing EVERY process
-including mpv/ffplay. There is no software way to "keep playing"
-through an actual suspend -- so every toggle below is really about
-whether a real suspend is allowed to happen at all, using two
-primitives: suppress_idle_display(allow_manual_sleep=...) (blocks
-passive idle-timeout dim/suspend always; the caffeine file -- SLEEP()'s
-own gate, confirmed by reading hotkey.sh directly -- is only created
-when allow_manual_sleep=False, additionally blocking a MANUAL lid/
-standby-triggered suspend too) and suppress_suspend_only() (creates
-ONLY the caffeine file, leaving idle_display's own separate screen-
-blank timeout completely untouched).
-
-AUDIO: new three-way "On Lid/Standby" toggle in the audio popup menu
-(native_video.AUDIO_LID_MODES): "Stop Playback" (passive dim/suspend
-blocked, but a real lid/standby suspend goes through -- music
-genuinely stops, resumes on wake), "Dim & Continue" (NEW DEFAULT --
-suppress_suspend_only(): screen dims/blanks via muOS's own normal
-timeout, but no suspend from any source, so music always keeps
-playing), "Keep Screen On" (screen never dims, matches Songo#5's own
-"keep screen awake" toggle per its developer's interview). Shared
-dispatch (_apply_audio_lid_mode()/_restore_audio_lid_mode()) used by
-both single-track and full-queue playback, so they always agree.
-Persisted (audio_lid_mode in settings.json).
-
-VIDEO: new two-way "On Lid/Standby" toggle, same popup menu location --
-"Stop Playback" (NEW DEFAULT, matches what Kaleb described as normal/
-expected: passive dim/suspend still blocked while actively watching,
-but a deliberate lid-close/standby-press suspends for real) / "Keep
-Playing" (the OLD behavior -- caffeine blocks even a manual suspend
-attempt, screen only blanks, video/audio keeps running, for anyone who
-wants audio-only background listening from a video source). Persisted
-(video_stop_on_lid_close in settings.json).
-
-BUG FIX (found during this session's own bug audit, before ever
-shipping): the popup menu's button handler unconditionally closes the
-menu (sets screen back to SCREEN_DOWNLOAD_BROWSE) BEFORE dispatching
-the chosen action -- true for every item that existed before "On Lid/
-Standby", so nothing needed a "stays open" exception until now. First
-draft's own comment incorrectly claimed it "stays open, same as
-Filter: Cycle" (a DIFFERENT menu, SCREEN_LIBRARY_MENU, which has no
-such unconditional close) -- caught by re-reading the actual dispatch
-code, not just trusting the comment. Fixed by explicitly skipping the
-auto-close for this one choice; verified live with a direct simulation
-of both the toggle (stays open) and every other item (still closes).
-
-FONT SIZE HOTKEY MOVED FROM L2/R2 TO L1/R1 ON ALL SIX DOWNLOAD-FLOW
-SCREENS (v26.07.23.32, Kaleb's request: "make those L1 R1 font size...
-the 6th screen we should modify jump 10 items with the left and right
-d pad if that's not mapped and make the l and r font"): App.font_size_
-hotkey() (added v26.07.23.30) now checks for "L"/"R" (the L1/R1
-shoulder buttons) instead of "L2"/"R2" -- a single change to the one
-shared helper automatically applies to all six screens that already
-call it (SCREEN_DOWNLOAD_SOURCES, _CATEGORIES, _VIDEO_SOURCES,
-_AUDIO_SOURCES, _VIDEO_SERIES, _AUDIO_BOOKS), no per-screen edits
-needed beyond the one exception below.
-
-SCREEN_DOWNLOAD_CATEGORIES was the one screen where L/R weren't free
-(already bound to jump-10-items navigation) -- confirmed live via its
-real button handler that "LEFT"/"RIGHT" (the D-pad's own directional
-buttons, distinct from the "L"/"R" shoulder-button strings in this
-app's naming) were genuinely unused there. Moved jump-10 navigation
-from L/R to D-pad LEFT/RIGHT, freeing L/R to join the font_size_hotkey()
-convention the other five screens already use -- all six screens are
-now fully consistent. Verified live via direct simulation: LEFT/RIGHT
-correctly jump 10 items with no collision against L/R's now-separate
-Font Size role.
-
-
-ALL DOWNLOAD-FLOW SCREENS; MEETING WORKBOOKS 6-MONTH-AHEAD LIVE PROBE
-(v26.07.23.29-.31, Kaleb's combined report + requests):
-
-(29) ROLLBACK -- "the open close settings for keeping on don't work at
-all in any way it always goes to standby no matter what when you close
-the lid... let's default to the original plan for both video and audio
-[and] remove the settings toggle": the v26.07.23.12-.20 "On Lid/
-Standby" three-way audio / two-way video toggle never worked as
-designed on real hardware. Fully removed: video_stop_on_lid_close and
-audio_lid_mode settings, the "On Lid/Standby" popup-menu items and
-their dispatch, and every native_video.py function/parameter that
-existed only to support them (suppress_suspend_only()/restore_suspend_
-only(), AUDIO_LID_MODES/AUDIO_LID_MODE_LABELS, _apply_audio_lid_mode()/
-_restore_audio_lid_mode(), the allow_manual_sleep param on suppress_
-idle_display()/play_jw_video()/play_video_queue(), the lid_mode param
-on play_audio_queue()). suppress_idle_display()/restore_idle_display()
-are back to their original, simpler, well-tested unconditional form --
-both video and audio now always keep the screen from sleeping during
-playback, no toggle to select anything different. All four playback
-call sites (single/queue x audio/video) updated accordingly. Confirmed
-clean via full compile -- zero dangling references to anything removed.
-
-(30) "In both gutenberg py and JW py all pop up menus need to have the
-font size option added... some categories don't have features other
-than select to open the list... I need to change font sometimes and
-it's difficult. Also in all video add the toggle for fit to screen and
-full screen": added "Font Size +"/"Font Size -" (reusing app.fonts.
-bigger()/smaller(), the exact same mutators the reading-view menu and
-Library screen's own L/R hotkey already use) to the existing SCREEN_
-DOWNLOAD_BROWSE_MENU popup, for every branch (video/audio/generic
-EPUB) -- plus "Screen Scaling: Fit/Fill" for video specifically,
-reusing the existing video_fill_screen setting. Both correctly use the
-"stays open" dispatch pattern (verified live via direct simulation of
-all 7 possible menu choices) so they can be pressed repeatedly without
-re-opening the menu each time.
-
-For the SIX download-flow screens that have no popup menu at all
-(SCREEN_DOWNLOAD_SOURCES, _CATEGORIES, _VIDEO_SOURCES, _AUDIO_SOURCES,
-_VIDEO_SERIES, _AUDIO_BOOKS -- exactly Kaleb's "some categories don't
-have features other than select" case), building six near-duplicate
-popup UIs was overkill for what's fundamentally a simple access
-problem. Instead: new App.font_size_hotkey(btn) shared helper, bound to
-L2/R2 on all six screens -- confirmed via direct inspection of each
-screen's real button handler (not guessed) that L2/R2 are genuinely
-unused everywhere, unlike plain L/R (SCREEN_DOWNLOAD_CATEGORIES already
-uses those for jump-10 navigation) or X (taken by Help on two of the
-six). Same app.fonts.bigger()/smaller() mutators and status-message
-wording as every other Font Size control in the app.
-
-(31) BUG FIX -- "meeting workbooks are missing we need to adjust that
-category to call the actual category similar to videos if that doesn't
-exist we need to create a check for all future issues of the next six
-months in advance. Because currently we have the whole years work
-books released": checked live whether a real mediator category exists
-for Meeting Workbooks the way Audio/Video have (every reasonable
-category-key guess 404'd) -- confirmed that API is audio/video-only;
-EPUB publications use the separate pub-code-keyed GETPUBMEDIALINKS
-lookup instead, which has no "browse this publication's catalog"
-capability, so there's nothing to switch generate_mwb_back_issues()
-to. Confirmed the actual reported bug live: check_new_issues()'s RSS
-feed had ZERO "mwb" entries at all that day (only a Watchtower one),
-so this function's fallback chain dropped all the way to a bare
-calendar guess -- which only reached July 2026, while September AND
-November 2026 were BOTH already real, live, downloadable EPUBs on
-jw-cdn.org at that exact moment (confirmed directly against GETPUBMEDIA
-LINKS, not assumed).
-
-New _mwb_probe_furthest_available(months_ahead=6): actively checks
-each real bi-monthly issue slot forward from today directly against
-GETPUBMEDIALINKS (the same live-availability mechanism every other
-pub-code lookup in this file already uses), continuing as long as
-issues keep being found, bounded to ~4 real network requests for a
-6-month window (confirmed live: exactly 4). A not-yet-published issue
-returns HTTP 200 with a JSON LIST containing a {"status": 404} object
-(confirmed live, not a dict) -- the existing _extract_epub() already
-handles that shape safely via its own try/except, no new handling
-needed. generate_mwb_back_issues() now tries this probe FIRST, falling
-back to RSS then the calendar guess only if the network genuinely can't
-be reached (verified live: simulated total network failure, confirmed
-graceful fallback with no crash). Verified live end-to-end: the
-generated list now correctly starts at November 2026 (the real
-furthest-ahead published issue) instead of the old, wrong July 2026.
-
-
-(v26.07.23.28, Kaleb's request: "remove auto player mode and only use
-mpv as default and have ffmpeg as alternate option. Also make sure the
-ffmpeg player has the same key mappings"):
-
-"Auto" and "mpv" were already functionally IDENTICAL in the selection
-logic (both preferred mpv first, ffplay as fallback) -- removing "auto"
-as a distinct settings value is a UI/settings simplification, not a
-behavior change. video_player_pref/audio_player_pref now default to
-"mpv" directly; the Video/Audio Player settings cycle is now a simple
-2-way mpv<->ffplay toggle instead of 3-way. Defensive fallback added at
-load time for a stale "auto" value from before this change (or any
-hand-edited settings.json) -- falls back to "mpv" safely rather than
-staying stuck on a value that no longer means anything. Also fixed a
-real bug caught mid-edit: the cycle dict's own .get() fallback default
-was still "auto" after the dict itself was updated to only have mpv/
-ffplay keys -- meaning cycling FROM a stale "auto" value would have
-returned "auto" again forever (a stuck loop, never actually escaping
-to a valid choice). Fixed to fall back to "ffplay" instead, verified
-live that a stale "auto" value now correctly escapes on the first
-press. Same "auto" cleanup applied to native_video.py's own function-
-signature defaults and docstrings (play_jw_video/play_video_queue/
-play_audio_file/play_audio_queue) for full consistency, not just the
-main.py settings layer.
-
-Checking "does ffplay have the same key mappings" required actually
-researching ffplay's real, hardcoded, non-configurable keymap (unlike
-mpv, ffplay has NO input.conf/custom-keybinding system at all -- its
-keys are compiled into the binary) via ffmpeg's own documentation
-(ffmpeg.org/ffplay.html, the ffplay-all man page). This caught a real,
-meaningful bug in the D-pad up "toggle title/progress" feature added
-two versions ago: it used the letter 's', which was assumed to be a
-safe no-op on ffplay the same way i/o (brightness) already are -- but
-ffplay's REAL native 's' binding is "step to next frame", which
-explicitly PAUSES playback first if not already paused. Every press of
-D-pad up during ffplay audio playback would have unexpectedly paused
-the music -- the opposite of a safe no-op, and the opposite of what
-"same key mappings" was supposed to guarantee. Fixed by moving to 'g'
-(KEY_G, value 34, matching this file's existing Linux keycode
-convention exactly), confirmed absent from ffplay's entire real
-documented keymap -- same "unbound letter, genuinely inert on ffplay"
-category i/o already reliably are. 'v' (D-pad down, album art) was
-independently confirmed to already be correct: ffplay's own real 'v'
-binding is "cycle video streams", a genuine match for the intended
-"toggle album art" behavior, not a coincidence needing a fix.
-
-Verified live: cross-checked all 9 keys in the final audio scheme
-against ffplay's complete real keymap -- 7 produce a genuinely matching
-action (pause, quit, seek +-60s, seek +-10s, cycle video/album-art) and
-the remaining one (the title/progress toggle, which has no native
-ffplay equivalent at all) is now a confirmed TRUE no-op instead of the
-previous accidental pause.
-
-
-(v26.07.23.27, Kaleb's request: "since it's an audio player remove
-the brightness and move start and select to d-pad"): brightness made
-more sense for video, where there's always a real image on screen
-worth dimming/brightening, than for an audio player showing at most a
-static cover image. D-pad up/down now carry the title/progress-bar and
-album-art toggles that briefly lived on START/SELECT instead.
-
-Final scheme (10 total inputs -- 6 buttons + 4 D-pad directions):
-A=pause, B=quit, L2/R2=track skip, L1/R1=seek +-60s, D-pad L/R=seek
-+-10s, D-pad U=toggle title/progress always-on, D-pad D=toggle album
-art. START/SELECT are now completely unused during audio playback
-again, same as before this whole feature existed.
-
-Since joy_start/joy_select are no longer needed by ANY audio code path,
-removed the plumbing entirely rather than leaving dead parameters
-around: reverted _audio_translate_loop()'s signature, play_audio_
-file()'s signature, play_audio_queue()'s signature (and its own
-internal play_audio_file() call), and both of main.py's audio call
-sites back to not accepting/passing them -- confirmed video's own
-LEGITIMATE, unrelated joy_start/joy_select usage (its own queue-skip
-feature) was left completely untouched throughout, verified by
-checking each remaining reference individually rather than a blind
-find-and-remove. Verified live: confirmed the final function signature
-has no joy_start/joy_select at all, and re-simulated all 6 buttons +
-4 D-pad directions through the real dispatch logic to confirm the
-simplified scheme is correct.
-
-
-(v26.07.23.26, Kaleb's request: "is there an option to toggle the
-album art or visualizer or title on screen? Or progress bar?"):
-confirmed a visualizer specifically is NOT a simple runtime toggle in
-either player -- mpv needs a --lavfi-complex filter graph set at
-LAUNCH time for that, not something a keypress can switch on mid-
-playback, so it's out of scope here. The other two ARE real, native,
-single-command mpv toggles, now wired up on START and SELECT (both
-genuinely unused during audio playback -- confirmed video's own
-audio-adjacent call site uses JOY_BACK, not a separate JOY_SELECT
-constant, which doesn't exist in this codebase):
-
-  START  -- KEY_S -> "cycle-values osd-level 1 3" in the shared mpv
-            input.conf: toggles between the OSD only flashing briefly
-            on seek/pause (level 1, the default everywhere else in
-            this app) and the title+progress bar staying permanently
-            on screen.
-  SELECT -- KEY_V -> "cycle video" in the shared input.conf: mpv's
-            own real, documented command for toggling embedded cover
-            art on/off -- coincidentally also mpv's own stock default
-            keybind for it, just re-declared since --no-config
-            disables built-in defaults, same as every other key here.
-
-Both new KEY_S/KEY_V constants follow this file's existing letter-key
-convention exactly (confirmed against KEY_Q=16/KEY_A_LETTER=30's real
-values -- standard Linux input-event-codes.h layout, not guessed).
-Threaded joy_start/joy_select through the full call chain the same way
-joy_l2/joy_r2 were: _audio_translate_loop() (new handling) ->
-play_audio_file() (new params) -> play_audio_queue() (new params,
-passed to its own internal play_audio_file() call) -> both of main.py's
-audio call sites. Both toggles are safe no-ops on ffplay, which has no
-runtime-togglable equivalent for either. Verified live: confirmed
-KEY_S/KEY_V are genuinely defined (not another KEY_V-style phantom
-reference), simulated all 8 buttons through the real dispatch logic,
-and confirmed all 8 physical button IDs are unique with zero
-collisions.
-
-AUDIO BUTTON SCHEME CORRECTED PER KALEB'S EXACT SPEC (v26.07.23.25):
-the .24 scheme above was immediately revised -- Kaleb wanted a specific
-layout instead: D-pad L/R + L2/R2 for seek/track-skip, L1/R1 for a
-coarser seek, D-pad U/D for a view/brightness toggle, and "use only
-default key binding times that are close match to the times I
-provided" (~15s/~30s) rather than inventing new custom durations.
-Final scheme, all reusing keys/durations video's own translate loop
-already relies on -- no new mpv input.conf entries needed at all:
-A=pause, B=quit, L2/R2=track skip (moved here from L1/R1), L1/R1=seek
-+-60s (closest existing duration to the ~30s asked for), D-pad L/R=
-seek +-10s (closest existing match to ~15s), D-pad U/D=brightness +-5
-(a real, already-existing, already-proven toggle -- video's own D-pad
-already uses it).
-
-BUG CAUGHT BEFORE EVER SHIPPING: an earlier draft of the D-pad up/down
-handler tapped KEY_V for a "cycle video"/toggle-view idea (toggling
-embedded cover-art visibility) -- but KEY_V was never actually defined
-anywhere in native_video.py. py_compile's syntax check can't catch a
-missing module-level name referenced inside a function body -- that
-error only surfaces at actual runtime, meaning this would have compiled
-clean and then crashed with NameError the very first time anyone
-pressed D-pad up/down on a real device. Caught by asking "is there any
-toggle for view modes or brightness we can wire up?" before finishing
-the implementation, rather than after -- replaced with KEY_BRIGHTNESS_
-UP/DOWN (native mpv `add brightness +-5`), matching video's own D-pad
-exactly, no new input.conf entry needed.
-
-_audio_translate_loop() now also reads SDL_JOYHATMOTION_EV (D-pad)
-events for the first time -- it previously only ever read button-down
-events, since it never needed the D-pad before this feature existed.
-Verified live: simulated all 6 buttons + all 4 D-pad directions through
-the real dispatch logic, confirmed every one sends the correct,
-already-defined key constant with no naming errors and no conflicts
-between the moved track-skip (L2/R2) and the new seek controls (L1/R1,
-D-pad L/R).
-
-
-Kaleb's report: "doesn't seem like you setup the seek buttons to match
-our mpv player controls" -- and this also fully explains the earlier
-"no progress bar" observation): confirmed a real, genuine gap, not a
-player-selection bug -- _audio_translate_loop() never sent ANY seek
-key at all, only pause (A)/quit (B)/track-skip (L/R). This is exactly
-why mpv's --osd-bar never appeared during audio playback either: that
-OSD only shows in response to a seek/pause/volume action, and nothing
-in the audio loop was ever triggering one, regardless of which player
-was actually running.
-
-L/R (JOY_L/JOY_R) were already spoken for -- track-skip within a
-queue, a deliberate, sensible existing feature -- so seeking can't
-reuse them without conflicting. Confirmed via the real button-ID
-constants (JOY_L=leftshoulder/7, JOY_R=rightshoulder/8, JOY_L2=
-lefttrigger/13, JOY_R2=righttrigger/14) that L2/R2 are completely free
-during audio playback; video reserves them for its own coarser +-10min
-skip, but audio tracks are far shorter, so this maps L2/R2 to mpv's
-FINER +-10s LEFT/RIGHT seek bindings instead (the same input.conf
-already defines both -- this just wires up the more useful one for
-typical song/talk lengths). ffplay natively binds LEFT/RIGHT to the
-identical +-10s seek too, so this works unmodified for either player,
-same as every other audio control already handling both.
-
-Threaded joy_l2/joy_r2 through the full call chain: _audio_translate_
-loop() (new handling) -> play_audio_file() (new params) ->
-play_audio_queue() (new params, passed to its own internal play_audio_
-file() call) -> both of main.py's audio call sites (play_audio_item,
-play_audio_queue_from), now passing JOY_L2/JOY_R2. Verified live by
-simulating all 6 button mappings through the real dispatch logic:
-existing controls (A/B/L/R) confirmed unchanged, new L2/R2 seek
-confirmed sending the correct KEY_LEFT/KEY_RIGHT with no conflicts.
-
-
-pop up menu" / "the pop up is black screen"): draw_download_browse_
-menu() has existed since the popup menu system was FIRST built
-(v26.07.21.42, well before this session -- "drop help menu and replace
-with pop up menu"), and its button handler correctly sets app.screen
-to SCREEN_DOWNLOAD_BROWSE_MENU on X -- but the render dispatch itself
-never had a matching branch to actually CALL the draw function. Every
-frame unconditionally clears the whole screen to black (SDL_RenderClear)
-before the screen-specific draw call runs; with no matching branch for
-this screen, that black clear was the last thing that happened before
-the frame got presented -- indistinguishable from a crash without
-checking process state, exactly matching what Kaleb saw. This affected
-EVERY item-browse list in the app, JW and Gutenberg alike, since
-they all share this one popup menu screen.
-
-Confirmed this predates the entire session (the function is unchanged
-from when it was first written) -- none of this session's own new menu
-items (Download All, On Lid/Standby) caused it; they were just as
-broken as everything else already in that menu, only nobody had
-pressed X to open it and noticed until now. This is also exactly why
-none of this session's own testing ever caught it: every menu-content/
-dispatch test exercised the LOGIC in isolation (which items appear,
-what pressing A does, whether the menu stays open or closes) -- never
-the actual SDL render call chain, since real SDL rendering can't run
-in this sandbox at all. Fixed with one missing elif branch, placed
-right next to SCREEN_DOWNLOAD_BROWSE's own existing entry.
-
-Immediately ran a systematic sweep for the same bug CLASS elsewhere:
-cross-referenced every screen constant with a button handler against
-every screen constant with a render-dispatch entry, looking for any
-other screen reachable via input but never actually drawn. Found zero
-other real instances -- the two apparent mismatches the sweep initially
-flagged (SCREEN_LIBRARY, SCREEN_SPLASH) were confirmed to be false
-positives from the script only matching "elif", not the initial "if"
-each of those two chains actually starts with.
-
-BUG FIX (v26.07.23.22, found during a follow-up sweep on the .21 dedupe
-work): start_download_all()'s per-track dedupe hit set ok=True, which
-the done/skipped/failed counting treats as a genuinely NEW download --
-so a dedupe hit (nothing actually downloaded, an existing copy
-elsewhere just found and left alone) inflated the "N new" count in the
-final summary, e.g. "Download All done: 3 new..." when really only 1
-was new and 2 were already-had-elsewhere. Fixed to ok=False + an
-"already downloaded" message, correctly bucketing as skipped instead,
-matching download_audio()'s own equivalent same-folder message.
-Verified live with a realistic mixed batch (2 genuinely new, 2 dedupe
-hits, 1 real failure) -- summary now correctly reads "2 new, 2 already
-had, 1 failed" instead of "4 new, 0 already had, 1 failed". Also
-confirmed the single-item video/audio download paths didn't have this
-same issue -- ok only controls message text there, no separate
-new-vs-skipped counting exists for a single download, so no
-equivalent fix was needed on that side. Also verified resolve_search_
-video_item()/resolve_search_audio_item() both always return items with
-"filename" present (inherited from resolve_video_link()/resolve_audio_
-link()'s own established item shape), so the new dedupe check can
-never KeyError on a lazily-resolved search result.
-
-VIDEO/AUDIO DOWNLOADS NOW DEDUPE ACROSS CATEGORIES TOO (v26.07.23.21,
-Kaleb's request: "series section files can end up in other
-categories... make series the source of truth to reduce ping-
-ponging"): extended the same real-duplicate-detection the EPUB
-migration feature already had to video and audio downloads too --
-confirmed via jw_fetch.py's own existing comments ("BYTE-IDENTICAL to
-Series' own...") that the SAME video really can be reachable through
-both the "Series" picker and a separate, overlapping VIDEO_SOURCES
-entry, so downloading it from each independently used to create TWO
-SEPARATE COPIES with no dedupe at all (unlike EPUBs, which already had
-this).
-
-Unlike EPUBs (which get a one-time flat -> category MOVE), video/audio
-never sit in a genuine flat/uncategorized state -- they always land in
-SOME category folder via _category_dest_dir(). So the right operation
-here isn't "move" (which is what caused the Gutenberg ping-pong), it's
-"dedupe only": if the exact filename already exists ANYWHERE ELSE in
-the movies/music library, leave it EXACTLY where it already is and
-skip the download entirely, rather than creating a second copy in the
-new folder. Whichever category downloaded it FIRST -- Series or
-otherwise -- becomes the permanent home automatically, with no
-movement possible, so no ping-pong risk exists structurally (same
-guarantee JW's own deterministic pub-code category mapping already
-gives EPUBs, just achieved differently since video/audio have no
-single stable "one true category" per item the way a publication's pub
-code does).
-
-New shared find_existing_file_elsewhere(filename, dest_dir, search_root)
-generalizes the EPUB-only find_existing_book_elsewhere() to take an
-explicit search root, so the same logic now covers video (JW_PLUGIN.
-find_movies_dir()) and audio (JW_PLUGIN.find_music_dir()) libraries too,
-not just books; the EPUB-specific function is now a thin wrapper over
-it. Wired into all three audio/video download paths: single-item
-video, single-item audio, and Download All's batch loop. Fixed a
-message-clobbering bug caught while wiring this in: the existing
-"downloaded successfully" status text was being applied unconditionally
-whenever ok=True, which would have silently overwritten the new,
-more-accurate "already downloaded (found in a different category)"
-message with the generic "downloaded, exit and open ROM Collection..."
-text -- now only applied for an actual fresh download.
-
-Verified live: simulated the exact real scenario (a video downloaded
-via "Series" first, then found again via a different overlapping
-category, then Series again) -- confirmed the file stays in Series/
-the entire time across all three attempts, with zero duplication and
-zero movement.
-
-
-category will it move it from one category to the other over and
-over?"): confirmed live, yes it would have. A book can legitimately
-belong to MULTIPLE real Gutenberg bookshelves at once (e.g. Sherlock
-Holmes is filed under both "Crime, Thrillers & Mystery" and "Short
-Stories") -- browsing it via a different real category than the one it
-was already organized under used to migrate it AGAIN every time,
-ping-ponging the file back and forth depending on whichever category
-was most recently browsed and downloaded from. Verified the exact
-scenario live: Mystery -> Short Stories -> Mystery moved the file twice
-before this fix, zero times after.
-
-Fixed by only allowing migration to pull a book OUT of genuine limbo
-(sitting flat, directly at LIBRARY_DIR's own root -- checked via
-os.path.dirname() on the stray's absolute path) into its first real
-category; once a book already has ANY category folder at all, a later
-download from a different valid category now reports "already in
-Library" and leaves it exactly where it is, rather than moving it.
-Same reasoning CATEGORIES_NO_FOLDER already applies one level up (a
-mixed view isn't a stable category to file under) now also applies to
-an ALREADY-CHOSEN real folder -- it's equally not something a later
-browse should get to override.
-
-
-issues" -- Kaleb's own request to re-audit): start_download_all()
-already correctly captured `items` synchronously in the main thread,
-BEFORE threading.Thread(...).start() ever ran, specifically so
-self.dl_items changing later (e.g. the person navigating to a
-different category) couldn't affect an already-running batch. But
-music_dir (the destination folder) was computed INSIDE the background
-thread instead, AFTER .start() had already returned control to the
-main thread -- a real, if narrow, race: nothing blocks navigating away
-from the browse screen while a batch download is running, so if the
-OS scheduler delayed the new thread's first instruction long enough
-for the person to pick a different category, every file in the batch
-would silently land in the WRONG category's folder, with no visible
-error. Fixed by capturing music_dir synchronously in the main thread
-too, right alongside items, matching the pattern items already used
-correctly. Verified live: the destination folder is now locked in
-before any navigation could occur, regardless of subsequent changes to
-self._current_audio_source.
-
-Also checked, all came back clean: no equivalent race exists in
-start_download() (single-item) or the EPUB download closure -- both
-already do all their category/destination resolution synchronously
-inside the SAME background-thread function that immediately uses the
-result, with no gap for external state to change in between (unlike
-Download All's now-fixed two-step capture). Gutenberg's filename
-sanitizer (_safe_filename(), a separate implementation from jw_fetch.py's
-sanitize_folder_name()) strips unsafe characters in one pass rather
-than a strip-then-convert sequence, so it was never at risk of the
-same curly-quote reintroduction bug fixed earlier this session; its
-120-character cap is also applied before the .epub extension is
-appended, never truncating into the extension itself. Checked real
-JW audio category data (489 items across the 4 largest categories) for
-genuine filename collisions between distinct tracks -- zero found.
-The theoretical risk of two DIFFERENT Gutenberg books sharing a title
-(and therefore a filename, which the stray-file migration feature
-matches on) is real but was already explicitly disclosed in that
-feature's own code comments as an accepted, low-probability trade-off
--- checked a real 25-book sample for a common generic search term
-("Poems") and found zero collisions, consistent with that assessment.
-
-
-Also checked, all came back clean: start_download_all()'s guard
-against a concurrent single-download is already bidirectional (checked
-both directions, not just one); no-player-found in play_audio_file()
-fails fast on the first track rather than looping through failures;
-skip-backward at the first track and skip-forward at the last track in
-both audio and video queues both end cleanly with no crash or index
-error; an exception inside a resolve_source callback is still safely
-cleaned up by the existing finally block (confirmed live) even though
-the real _resolve_media_source() implementation already can't raise in
-practice (it catches everything internally).
-
-
-UI issues like we had in the past?"): draw_library_delete_folder()'s
-row rendering had NO width truncation at all -- unlike every other
-similar list screen, which either has short, fixed labels (safe
-without it) or explicitly calls _fit_text(). This screen is neither:
-folder names are real, unbounded text (a person's own typed name, or a
-long category name like "Sing Out Joyfully to Jehovah-Instrumental",
-42+ characters) PLUS a 30-character "press A again to confirm" suffix
-appended when armed -- confirmed this combination would run well past
-the screen edge, especially at a larger Font Size setting. Fixed with
-the same _fit_text() ellipsis convention used everywhere else dynamic-
-length text meets a fixed-width row. Also re-verified two related
-candidates came back clean: the "[OFFLINE -- downloaded only]" title
-suffix inherits an existing, well-reasoned wrap fix (v26.07.12.09) that
-guarantees text is never silently dropped even in a worst-case-long
-title; the Library's "By Folder" sort-mode suffix was already correctly
-capped with _fit_text() when it was first written this session.
-
-
-Kaleb's request: "anything we missed based on past bugs we fixed
-historically, check again"): systematically re-checked every bug class
-fixed this session for un-fixed siblings elsewhere. Found one real,
-more consequential gap the v26.07.23.14 caffeine-file fix didn't cover:
-idle_sleep/idle_display themselves (/opt/muos/config/settings/power/)
-are REAL PERSISTENT config files, unlike _CAFFEINE_PATH's /run/muos
-(tmpfs, cleared on reboot) -- if PicoReader crashes or loses power
-while either is forced to "0" during any playback session, they stay
-stuck at "0" system-wide, surviving even a full reboot, with nothing
-to self-heal them. Worse than the caffeine bug: that one degraded to
-"suspend blocked" (annoying, recoverable by any clean playback+quit);
-this one silently discards the person's actual screen-timeout settings
-with no way back except re-entering old numbers by hand in muOS's own
-Settings, if they even remember what they were.
-
-Fix: suppress_idle_display() now writes the ORIGINAL values to a small
-backup file (native_video.set_idle_backup_path(), pointed at PicoReader's
-own persistent DATA_DIR by main.py at startup) before ever touching the
-live config; restore_idle_display() deletes it on every clean restore.
-native_video.check_and_recover_stale_idle_backup(), called once at app
-startup (right after DATA_DIR is guaranteed to exist, before any
-playback this session) -- finding a leftover backup file is proof the
-last session ended abnormally mid-suppression, and its contents are
-the real values to restore, self-healing even across a reboot. A
-corrupt/unreadable backup (e.g. the write itself got cut off mid-crash)
-is handled safely too -- can't recover from it, but doesn't leave it
-sitting there forever either.
-
-Verified live end-to-end: simulated a real crash (suppress without
-restore) with real original values (120/90), confirmed the next
-session's startup check correctly recovers them and cleans up the
-backup file; confirmed a normal clean playback session still writes
-and cleans up the backup correctly with nothing left behind; confirmed
-a deliberately corrupted backup file doesn't crash the startup check.
-
-Everything else re-checked against this session's other fixed bug
-patterns (sanitizer ordering, exact-vs-fuzzy text matching, folder-
-naming consistency across code paths, unguarded background-thread
-operations, popup-menu auto-close assumptions) came back clean -- no
-other unfixed siblings found.
-
-
-(v26.07.23.15, Kaleb's own question: "would [a future reorganize
-feature] hurt anything?" -- scoped down, per his explicit instruction,
-to fixing this for the per-download stray-file migration that already
-exists, NOT building the bulk reorganize feature yet):
-
-Found by actually reading how each piece of state is keyed, not
-assuming: Pinned/Finished are keyed by "relpath" (path relative to
-LIBRARY_DIR) -- scan_library()'s own stale-cleanup ACTIVELY DELETES any
-entry whose relpath no longer matches a real book on its very next run
-(which happens constantly), so moving a pinned book without also
-updating its pin entry would silently lose the pin for good. Bookmarks/
-reading position are keyed by the FULL file path -- confirmed NOT
-auto-purged (they're the person's own data, per orphaned_bookmark_
-book_paths()'s own docstring), but would become invisible/unreachable
-at the old path with nothing pointing at the new one -- reopening a
-moved book would show no resume point at all, indistinguishable from
-having never read it.
-
-New main.migrate_book_state(old_path, new_path), called right after
-find_existing_book_elsewhere()'s shutil.move() succeeds: renames the
-pin/finished set entries (relpath) and the bookmarks.json entry (full
-path) to the new location, and cleans up the old book_id-keyed image/
-anchor/wrap cache files (they'd just be orphaned dead weight under the
-old hash anyway -- the new path regenerates its own cache fresh on
-next open, a harmless one-time re-decode, not data loss). Wrapped in
-its own try/except -- a failure here must never undo the successful
-file move itself; worst case on failure is the old state stays
-orphaned exactly as it would have before this fix existed, not a new
-regression.
-
-Verified live with realistic pre-existing state (a pinned book with
-real bookmark/reading-progress data and populated caches): pin, exact
-bookmark content (anchor position), and old cache cleanup all confirmed
-correct after migration; also verified a book with NO existing state
-migrates as a clean no-op with no exception.
-
-
-
-(v26.07.23.08-.11, Kaleb's requests: "New Issues, Popular, Latest,
-Random should show category markers", "if it sees duplicate copies...
-have it migrate them", "check for bugs across menu navigation, folder
-naming, creation, deletion... resilience for error handling"):
-
-New optional plugin function resolve_item_category(item), called by
-start_download()'s EPUB branch ONLY when the open category is in
-CATEGORIES_NO_FOLDER (the mixed views that have no single real genre
-of their own): jw_fetch.py's version is a pure local dict lookup
-(item["_pub"] against the same STATIC_PUBLICATIONS/PERIODICALS
-category columns used elsewhere -- e.g. a Watchtower "New Issues" hit
-now correctly files under "Watchtower--Study Edition"); gutenberg_
-fetch.py's version fetches the book's own detail page (a real extra
-network round-trip, NOT the zero-cost reuse the adult-content filter
-gets -- accepted trade-off for simplicity) and reads its "In Category:"
-bookshelf tags.
-
-BUG FIX (v26.07.23.09, Kaleb's own catch: "wouldn't Sherlock Holmes be
-Mystery not Short Stories?"): the first version of gutenberg_fetch.py's
-resolver just took the FIRST "In Category:" tag in feed order --
-Sherlock Holmes' first tag happens to be "Short Stories" (a FORMAT),
-even though "Crime, Thrillers and Mystery" (the real genre) is right
-there as a second tag. Fixed by filtering out known format-only
-categories (short stories, poetry, plays, essays, letters, etc.) and
-using the first remaining genre tag instead -- confirmed live across
-5 real books.
-
-BUG FIX (v26.07.23.11, found immediately after .09/.10 during migration
-testing): even after picking the right genre tag, returning it
-VERBATIM caused real folder fragmentation -- browsing the real "Crime,
-Thrillers & Mystery" category (this app's own wording, with "&")
-creates one folder, but the same book auto-resolved from a mixed view
-returned Gutenberg's raw "Crime, Thrillers and Mystery" ("and" instead
-of "&") and created a SECOND folder for the same genre -- the exact
-kind of duplicate-location problem the migration feature below is
-supposed to prevent. Fixed with fuzzy token-overlap matching back to
-this app's own CATEGORIES list (exact-string matching tried first was
-too brittle against Gutenberg's real wording -- "Children & Young
-Adult Reading" vs this app's "Children & Young Adult", "Science-
-Fiction" vs "Science Fiction") -- confirmed live this now reconciles
-both code paths onto one consistent folder name every time.
-
-Stray-file migration (main.py's find_existing_book_elsewhere(), new
-v26.07.23.08): before downloading anything, checks whether a file with
-the same name already exists SOMEWHERE ELSE in the library (e.g. a
-flat copy from before category folders existed, or a copy from an
-earlier un-categorized mixed-view download) and moves it into the
-resolved destination instead of re-downloading -- free (no network),
-instant, cleans up the stray. Basename-only matching, not content
-hash -- both plugins derive filenames deterministically from stable
-identity, so this is safe in practice without the I/O cost of hashing
-every file in the library on every download.
-
-Bug audit findings (v26.07.23.11): (1) start_download_all()'s
-os.makedirs() was the ONLY one of four in the app not wrapped in a
-try/except -- a real failure (permission denied, disk full, invalid
-path) would die silently inside its background thread and leave
-_dl_all_running stuck True forever, permanently disabling both Download
-All AND single-item Download (which also checks that flag) until app
-restart. Fixed with an explicit try/except that releases the flag and
-reports a real error; verified live by forcing a genuine OSError.
-(2) "New Folder" always said "Created folder X" even when os.makedirs's
-exist_ok=True silently did nothing because the folder already existed
--- now distinguishes "already exists" from "created". (3) Menu
-navigation, hidden-row skipping, and Delete Folder's index-clamping
-after a deletion were all audited against the two new menu items and
-found already safe (string-based dispatch throughout, no hardcoded
-indices assumed list length/order).
-
-
-(v26.07.23.05-.07, Kaleb's request: "have the library manager check all
-sub folders", "we would need to save epubs into those sub categories
-too", "should also work when person not using JW.org and decided to
-make their own folders", "implement a create folder feature and delete
-folder option"):
-
-scan_library() now os.walk()s LIBRARY_DIR recursively instead of a flat
-os.listdir() -- finds EPUBs in ANY subfolder, whether the app created
-it (category downloads, see below) or a person made it manually in the
-Books ROM folder outside the app entirely; both are treated identically
-since the walk doesn't care how a folder got there. Identity key for
-the on-disk cache/pinned/finished sets switched from bare filename to
-"relpath" (path relative to LIBRARY_DIR) -- bare filenames alone would
-collide across different subfolders (two unrelated books happening to
-share a name). A root-level book (no subfolder) has relpath==filename,
-identical to before this change, so pre-existing pin/finished/cache
-entries for books that stay at the root are completely unaffected.
-Updated every call site that used to compare on book["filename"] for
-identity (toggle_pin/toggle_finished, _apply_library_view's Finished
-filter, finished_books_present/clear_finished_book_caches, the Pinned
-count, the Continue Reading marker, Mark Finished/Unfinished's status
-check) -- book["filename"] itself is kept as the bare basename for any
-future display use, just no longer used for identity anywhere.
-
-New "By Folder" sort mode (LIBRARY_SORT_MODES) groups books by their
-subfolder alphabetically (root-level books sort last), shown as a
-lightweight " -- Folder Name" suffix next to the title -- same
-approach author/last_read already use, deliberately NOT a real header
-row (would need touching this screen's fragile windowed-scroll/row-
-height math for what's meant to be a simple at-a-glance grouping cue).
-
-Downloaded EPUBs (both jw_fetch.py and gutenberg_fetch.py) now save
-into LIBRARY_DIR/<Category Name>/ instead of flat at the root, same
-pattern as the JW Audio/Videos category subfolders (v26.07.23.03) --
-start_download()'s generic EPUB branch checks self.dl_category against
-the active plugin's new optional CATEGORIES_NO_FOLDER list (JW's "New
-Issues" RSS feed, Gutenberg's Popular/Latest/Random views) before using
-it as a folder name; none of those are a single stable category (they
-mix genres/pub-types together), so books from them stay flat at the
-root, same "no single stable category" reasoning already used for
-Search Audio/Search Videos. Folder names reuse jw_fetch.py's
-sanitize_folder_name() (shared utility, not duplicated in
-gutenberg_fetch.py). Category names themselves were already using real
-JW.org terminology (Bibles, Books & Brochures, Tracts, Watchtower--
-Study/Public Edition, Awake!, Meeting Workbooks -- confirmed against
-wol.jw.org's own publication-type headings and jw.org's own Watchtower
-Study/Public Edition naming); "Books & Brochures" is a deliberate merge
-of jw.org's two separate real categories (Books, Brochures) since the
-app doesn't track that distinction per-publication and splitting it
-would risk misclassifying rather than a verified fix -- flagged as a
-known scope limit, not fixed by guessing.
-
-New "New Folder" / "Delete Folder" actions in the Library popup menu
-only (per Kaleb's explicit scope -- not duplicated anywhere else).
-New Folder opens the existing SCREEN_TEXT_ENTRY keyboard + os.makedirs.
-Delete Folder is a simple list picker (list_library_folders(), top-
-level LIBRARY_DIR folders only -- app-created or a person's own) with
-the same two-press-confirm safety as "Delete Book"; only deletes a
-folder that's genuinely empty (checked live at press time, not
-cached) -- a non-empty folder gets a clear status message instead of
-being force-deleted, no bulk-move-books flow, kept deliberately simple
-per Kaleb's own framing.
-
-Keyboard auto-capitalizes each word as you type, but ONLY for New
-Folder (Kaleb's own follow-up concern: always doing this globally
-could cause search-matching problems) -- new App.te_autocap flag
-(default False), only set True by New Folder's own open_text_entry()
-call; the shared char-append handler only lowercases a typed letter
-(unless it's the first character or follows a space) when that flag is
-set. Every other caller of this same keyboard -- Search Audio/Videos/
-Gutenberg, pub code entry, theme naming -- passes nothing and is
-completely unaffected, typing exactly whatever case is pressed, same
-as before this existed. Grid itself still only shows uppercase glyphs
-(no shift/caps key, kept deliberately simple) -- the inserted character
-is what changes, not the visual keyboard.
-
-BUG FIX (v26.07.23.04, found during a "make sure real JW.org category
-names are followed" audit, jw_fetch.py): _sanitize_video_filename()'s
-curly-quote-to-straight-quote conversion ran AFTER its bad_chars strip
-pass -- so a curly double quote (common in real JW.org titles/category
-names, e.g. the two "Sing Out Joyfully" entries) got converted into a
-literal straight '"' character in the FINAL output, even though '"' is
-explicitly in bad_chars because it's one of the characters FAT32/exFAT
-(what SD cards actually use) forbid in a filename. Confirmed live this
-could have produced a category subfolder name muOS's own SD card
-filesystem might refuse to create. Fixed by running all typographic
-normalization (dashes, curly quotes) BEFORE the bad_chars strip, so any
-straight quote introduced by that conversion still gets caught by the
-same strip everything else goes through. This function is also used
-for every downloaded song/video's own filename, not just category
-folder names, so the fix protects both.
-
-Also (same audit): the 4 new "Sing Out Joyfully"/"Sing to Jehovah"/
-"Children's Songs" AUDIO_SOURCES labels (added v26.07.23.01) and 4
-PRE-EXISTING VIDEO_SOURCES subcategory labels ("Become Jehovah's
-Friend", "Love People", "Pure Worship", the video "Sing Out Joyfully"
-entry) were ASCII approximations (straight quotes + " -- ") of the
-real jw.org names. Replaced with the byte-for-byte real strings
-(confirmed live against the mediator API's own "name" field for each)
--- real em dash (\u2014), real curly quotes (\u201c/\u201d/\u2019) where
-jw.org actually uses them. Confirmed the bundled DejaVu Sans Condensed
-font has real glyphs for all of these (non-zero width), so they render
-correctly on-screen rather than falling back to a missing-glyph box.
-This matters beyond just organization -- with per-category download
-subfolders (v26.07.23.03) now writing to disk, an inexact label was no
-longer just a cosmetic difference from jw.org's own naming, it was the
-literal folder name a person would see browsing ROMS/Music directly
-outside the app.
-
-"The Good News According to Jesus--Soundtrack 1/2/3" and "Commit Your
-Way to Jehovah--Soundtrack", also visible in Kaleb's screenshots, are
-NOT categories in the real Audio tree (confirmed live: exactly 7
-subcategories, none titled "Soundtrack") -- they're standalone
-single-track releases with their own pub codes. Out of scope for
-Download All; would need individual AUDIO_SOURCES entries instead if
-Kaleb wants them added later.
-
-MEDIA/BOOKS DIRS NOW CHECK /mnt/union/ROMS FIRST (v26.07.18.02, Kaleb's
-report). find_books_dir() (main.py), find_movies_dir()/find_music_dir()
-(jw_fetch.py) were all only checking /mnt/sdcard and /mnt/mmc -- never
-/mnt/union, muOS's actual universal shared ROMS mount (SD1+SD2 merged
-view), which was already confirmed correct for the Ports launcher (see
-_ports_launcher_path()). All three finders now check /mnt/union/ROMS/...
-first, falling back to /mnt/sdcard then /mnt/mmc. Not yet confirmed on
-real hardware.
-Kaleb confirmed (v26.07.18.03): /mnt/union is muOS's actual default ROM
-location REGARDLESS of which physical SD card slot (SD1/SD2) content
-lives on -- it's not "the merged view as a fallback option", it's the
-one path that's always correct. So on Kaleb's real hardware /mnt/union
-will always match first and the /mnt/sdcard//mnt/mmc entries are dead
-fallback code that should never actually fire -- kept only as a safety
-net for a hypothetical setup where /mnt/union isn't mounted, not
-because /mnt/sdcard/mmc are equally valid targets. Don't reorder or
-"balance" these candidate lists in a future cleanup -- /mnt/union
-belongs first, permanently.
-
-TOAST PILL BACKGROUND NOW FADES WITH THE TEXT (v26.07.18.01, Kaleb's
-report: "black box that stays until I press a button" after a theme
-change). Root cause: _draw_status_bar()'s pill background was drawn via
-fill_rect_rounded(..., COL_PANEL, ...) at COL_PANEL's fixed alpha=255 --
-only the TEXT above it used the caller's fade `alpha`. So the pill
-never actually faded, it just popped in solid and then, one frame after
-status_until passed, simply stopped being drawn at all. Because this
-app only redraws on demand (see need_redraw gating in the main loop),
-whatever the LAST rendered frame looked like just sits there frozen
-until the next real input forces a redraw -- and mid-theme-crossfade,
-COL_PANEL itself can read as near-black, so that frozen solid pill
-looked exactly like a stuck black box. Fix: alpha-modulate the pill
-fill the same as the text (SDL_SetRenderDrawBlendMode + Color(...,
-alpha) passed into fill_rect_rounded). Logic-verified via headless
-SDL2 import/init; not yet confirmed on real hardware.
-
-FONT SIZE LADDER (current values): SIZE_STEPS = [15,16,18,21,23,27,32]
--- three steps (14->15, 24->23, 28->27) were adjusted from their
-original values after reviewing per-size pixel-fit waste across all
-three canvas heights (SH=720/480/540); each swap fit better at all
-three heights simultaneously except 14->15, which trades a small loss
-at SH=540 for a clear win at 720/480 (Kaleb's call). Every call site
-indexes via SIZE_STEPS[size_index], so no hardcoded literal size
-values exist elsewhere and no migration is needed for existing users'
-saved font_size_index. ui_small's max(11, pt-4) floor is unaffected.
-None of these three were verified for actual on-device readability --
-that's a real-screen/real-eyes judgment the pixel-fit math can't make.
-
-DEFAULT FONT SIZE FOR FRESH INSTALLS: 18pt (font_size_index=2, in
-FontManager.__init__'s fallback, only used when settings.json has no
-saved value). 21pt was tried and reverted -- it drops visible list
-rows (Library/Settings/JW category browsers) on RG34XX-SP's 480px
-height from 16 to 9, a bigger jump than felt worth trading for reading
--page size alone. Existing users with a saved font_size_index are
-unaffected by this value either way.
-
-READER BODY: TOP-FLUSH CONFIRMED AS INTENDED (v26.07.18.06). Briefly
-tried centering the leftover row-flooring slack (body_rows = body_h //
-line_h) evenly above/below the text block instead of leaving it all at
-the bottom -- Kaleb reviewed the before/after numbers and confirmed no
-lines were gained or lost either way (purely cosmetic), and prefers
-text flush to the top (0px top gap), so this was REVERTED. Current
-behavior: body_top stays exactly _reader_body_layout()'s own value,
-all leftover slack sits between the last text row and the hint bar.
-Don't reintroduce leftover-centering without Kaleb raising it again.
-
-RG34XX-SP: CONFIRMED WORKING ON REAL HARDWARE (Kaleb's own on-device
-test). Full first-boot checklist passed with no issues:
-- Boots correctly via mux_launch.sh / SETUP_APP ordering.
-- Button mapping feels right in practice, not just source-verified --
-  confirms the raw SDL_Joystick API approach (not GameController API)
-  is genuinely unaffected by muOS's retro/modern A/B-swap convention
-  (that swap lives in device/*/control/gamecontrollerdb, a different
-  subsystem PicoReader never touches).
-- 720x480 canvas renders correctly via the CANVAS_HEIGHT_PROFILES
-  auto-detect table, no stretch/crop artifacts.
-RG34XX-SP is now PicoReader's second confirmed device alongside the
-primary RGCubeXX-H target. Nothing left to verify or code for this
-device.
-
-PIN/FINISHED WRITES DEBOUNCED, SAME PATTERN AS SETTINGS (v26.07.17.20,
-Kaleb's follow-up: "any other writes we can reduce until exit or book
-close?"). Audited every disk-write call site in the file. Two were
-genuinely analogous to the settings I/O problem: toggle_pin()/
-toggle_finished() are hotkey-bound (START Pin, Mark Finished/
-Unfinished) and used to write pinned.json/finished.json unconditionally
-on every press. save_pinned()/save_finished() now debounce the disk
-write the same way save_settings() does (PIN_FINISHED_FLUSH_DEBOUNCE_
-SECONDS=3.0, separate from the settings debounce timer/dirty flags but
-identical pattern) -- self.pinned/self.finished were ALREADY the live
-RAM state (nothing new cached there), only the disk-write side changed.
-flush_pin_finished_now() hooked into the same 3 quit paths as
-flush_settings_now(), PLUS 4 book-close checkpoints (every
-app.save_progress() call site) per Kaleb's "until exit or book close"
-phrasing -- that's this app's other natural checkpoint beyond quitting.
-Deliberately did NOT touch bookmarks/reading-progress writes (already
-only fire at those same checkpoints, not per-page-turn -- no hot-path
-problem there) or library-cache/custom-theme writes (only on deliberate
-one-off actions, not spammable via a held button) -- see the actual
-conversation for the full audit reasoning if it needs revisiting.
-
-Verified against the REAL shipped functions (AST-extracted, not
-reimplemented) -- 5000-call spam collapsed to 1 write per file, RAM
-always correct, flush-when-dirty/no-op-when-clean both correct, and a
-"only one of the two is dirty" case confirmed only THAT file gets
-written, not both. One methodology note for future sessions verifying
-code this way: a naive text-based extraction (grab from "def X" to the
-next "\ndef ") can silently sweep up trailing MODULE-LEVEL statements
-sitting between two function defs (here, it grabbed a stray
-`FINISHED_PATH = os.path.join(...)` line and re-executed it inside the
-test, clobbering the test's own path variable and producing a false
-failure that looked like a real bug in the shipped code). Caught and
-corrected mid-session by switching to ast.parse()-based extraction
-(exact node.lineno/end_lineno boundaries) -- use that method, not
-'\\ndef ' string search, for any future standalone verification of
-functions pulled out of this file.
-
-SETTINGS I/O MOVED TO RAM + DEBOUNCED DISK WRITES (v26.07.17.19,
-Kaleb's request after asking about spam-press CPU/SD-card cost).
-load_settings()/save_settings() used to hit disk on EVERY call --
-save_settings() did a full JSON read+write each time, unthrottled,
-and it's called on every press of several toggles (Sound Effects,
-Night Mode, Image Dimming, etc.). Not a lockup risk (this app's input
-is button-DOWN-only, no auto-repeat-while-held, so real-world rate is
-capped at human finger speed -- see the comment near
-SDL_JOYBUTTONDOWN_EV's definition), but more SD-card writes and
-per-press latency than necessary. Now: settings live in one in-RAM
-dict (_SETTINGS_CACHE, lazy-loaded once), save_settings() updates it
-immediately (app state always instantly correct) but the actual disk
-write is debounced to at most once per SETTINGS_FLUSH_DEBOUNCE_SECONDS
-(3.0s) -- see flush_settings_now()/_flush_settings_to_disk(). Hooked
-flush_settings_now() into all 3 real quit paths (SDL_QUIT_EV, ESCAPE,
-and the quit_requested toast block used by Library B-to-quit + Reader
-menu's Exit App) so a clean exit never drops a pending change --
-only an UNCLEAN exit (power loss/force-kill) can lose the last few
-seconds of settings changes, an accepted tradeoff that does NOT apply
-to reading progress/bookmarks (separate files, untouched by this).
-Found and removed a pre-existing exact-duplicate save_settings()
-definition while doing this (the second one silently shadowed the
-first at import time -- dead code, but worth noting in case a future
-diff looks confusing). Verified standalone against the real extracted
-functions: 5000 rapid save_settings() calls collapsed to exactly 1
-disk write, RAM stayed correct throughout, flush_settings_now()
-correctly no-ops when nothing's dirty and correctly writes when
-something is, debounce window re-arms correctly after it elapses. Also
-re-ran the full v26.07.17.15-18 fade/spam/redirect test suites against
-this build -- no regressions.
-
-IMAGE DIM OVERLAY NOW CROSSFADES (v26.07.17.18, Kaleb's request:
-"does it fade like the themes do?" -- it didn't, now it does).
-_draw_image_dim_overlay() used to read IMAGE_DIM_ALPHAS[level] fresh
-every frame with no interpolation, so cycling Off/Low/Med/High or
-toggling Night Mode snapped the image tint instantly. Added a small
-from/to/start/duration state (_IMG_DIM_ALPHA_*, DURATION=0.18s --
-deliberately the SAME constant value as _THEME_TRANS_DURATION, so a
-Night Mode toggle's simultaneous color+image change reads as one
-coordinated fade, not two mismatched timings). Scope is intentionally
-narrower than the theme fade: it only advances while an image is
-actually being drawn (theme fade ticks every frame from main()'s
-render loop regardless of screen) -- there's nothing to animate when
-no image is on screen, so this isn't a missing tick, just a different
-correct scope. First-ever call snaps (no stale "fade from nothing").
-Verified in both directions (fade-in and fade-out toward Off, which
-needed the early-return changed from checking the raw level to
-checking the ANIMATED alpha -- otherwise a fade-out toward Off
-would've been cut off instantly instead of finishing the fade).
-
-CLOCK REFRESHES WHILE MENU IS OPEN -- SETTLED ON THE SIMPLE VERSION
-(v26.07.21.16-21, Kaleb, iterated down to this final shape across
-several requests -- merged into one entry, the intermediate approaches
-are superseded, not worth keeping as separate stacked notes).
-App.maybe_refresh_clock(), called from draw_menu()/draw_library_menu(),
-updates the clock string if _CLOCK_REFRESH_SECONDS=5s (~12x/min --
-Kaleb's explicit call: "doesn't need to be exactly to the second") has
-passed since the last refresh. Scoped to the clock ONLY -- battery/
-WiFi still refresh exclusively on menu-open, per Kaleb's earlier,
-separate explicit call.
-
-An earlier attempt to keep the clock ticking while the menu sits fully
-idle (a forced-redraw mechanism) was abandoned after it produced a
-burst of ~180 redraws instead of 1 -- not worth the complexity for a
-small corner clock, so the final design is purely opportunistic
-instead: it only updates when draw_menu()/draw_library_menu() get
-called anyway for some other reason (menu navigation, a status toast,
-a theme transition). If the menu sits completely untouched, the clock
-can lag behind real time until the next natural redraw -- an accepted,
-deliberate tradeoff, not a bug to keep chasing.
-
-12-HOUR CLOCK ADDED UNDER THE STATUS ICONS (Kaleb's follow-up to the
-battery/WiFi feature above). "9:41 PM" format (no leading zero,
-stripped manually since %-I isn't portable across platforms) via
-time.strftime("%I:%M %p").lstrip("0"), drawn on its own row directly
-under the icon row in _draw_status_indicators(), right-aligned to the
-same edge. Same refresh-on-menu-open timing as battery/WiFi (cached
-in refresh_status_indicators(), not live-updated every second) --
-deliberately consistent with the other two rather than making just
-the clock live. The added row never collides with the menu item list
-starting below it, across all Font Sizes/
-devices/battery-wifi-state combinations.
-
-BATTERY/WIFI STATUS INDICATORS IN POPUP MENUS (v26.07.21.14, Kaleb's
-request, exact placement confirmed via his own annotated screenshots
-of both popup Menu screens). Battery % + WiFi connection icon now
-drawn top-right in both the main reader popup Menu (draw_menu()) and
-the Library Menu (draw_library_menu()) -- the reader Menu's centered
-face+"PICO READER" logo shifts left to make room. Data sources
-verified against the REAL MustardOS/internal repo, not guessed:
-battery from /run/muos/battery/capacity + .../charging (a plain file
-muOS's own battery.sh keeps continuously current, no root needed);
-WiFi from standard Linux sysfs /sys/class/net/wlan0/operstate +
-carrier (kernel-level, not even muOS-specific). Both fail soft to
-None (icon simply omitted, never fake/zero data) when unreadable.
-WiFi disconnected state draws the same 3-bar signal icon, dimmed,
-with a diagonal strike-through (Kaleb's own words: "flash through
-it") -- no interface found at all is a third, distinct state (icon
-omitted) from "interface exists but not connected" (icon shown,
-struck through). Deliberately NOT live-updated while a menu is open
-(Kaleb's explicit call) -- refresh_status_indicators() is called once
-at each of the 4 real entry points into these two screens, not every
-frame, then both draw functions just read the cached values.
-
-SUBTITLE TOGGLE, Y BUTTON (v26.07.21.01, Kaleb's request): during video
-playback, Y now sends 't' via the existing uinput bridge to whichever
-player is running. ffplay already binds 't' to "cycle subtitle stream"
-by default (its own documented default keymap, includes a "none" state
-in the cycle). mpv has no default binding on 't', so the bundled
-input.conf now explicitly adds "t cycle sub-visibility". Both call
-sites of play_jw_video() updated to pass joy_y=JOY_Y (optional/None-safe,
-same pattern as joy_l1/joy_r1). Not yet confirmed on real hardware.
-
-IMMERSIVE MODE OVERLAY POSITIONING: body text uses TRUE full reclaim
-(zero margin, no space held back). The %-progress marker, the
-"Rendering... N%" toast, and the general status_msg toast (bookmark
-added, exiting, video-download status, Font Size +/- toast) all used
-to anchor to `SH - hint_height(fonts)` (i.e. where the hint bar would
-be) regardless of Immersive Mode, causing 6-69px of real overlap with
-body text once Immersive Mode let text run close to SH. Current
-behavior: both toasts are transient and fade on their own, so they're
-pinned to the real screen bottom (`SH - 8px`) and allowed brief
-overlap rather than reserving permanent space. The %-marker (always on
-screen, so treated differently) renders FADED instead --
-IMMERSIVE_MARKER_ALPHA=90 via render_text()'s alpha param, no
-background pill, blends into the page rather than competing with it.
-
-%-MARKER/HINT-TEXT OVERLAP FIX (found during Kaleb's requested
-double-check after SELECT's hint label grew). Real bug: the old
-label-font logic hardcoded ONLY 21pt as needing a smaller marker font,
-calibrated against the OLD (shorter) hint text. Adding "SELECT
-Immersive"/"SELECT Download" shifted which sizes are actually tight --
-21pt now wraps to 2 lines with huge clearance (fine on its own), while
-18pt and 32pt (never a problem before) started overlapping by a few
-px, and the old 13pt fallback still wasn't small enough for either.
-Replaced with a real computed loop: try ui_small, then step down
-through 13/12/11/10/9pt until measured clearance against THIS exact
-hint text's actual last line is >=20px where possible, floored at 9pt.
-Self-correcting for any future hint text length change instead of
-needing another hardcoded fix.
-
-%-PROGRESS MARKER SIZING/POSITIONING (current state, condensed from a
-multi-pass fix): Immersive Mode always uses full ui_small size (no
-shrink loop) with a fixed 10px edge margin -- nothing for the marker
-to overlap there since the hint bar's own text isn't drawn in that
-mode. Non-immersive mode keeps a real shrink loop (genuine space
-constraint at 18pt/32pt, where the hint text's own last line is
-unavoidably wide), floored at 11pt with MARKER_SIDE_PAD=12px/
-MARKER_MIN_CLEARANCE=6px (measured against real HINT_CORNER_RADIUS
-geometry, not reusing the more conservative HINT_SIDE_PAD/20px built
-for the hint TEXT's own margin) -- 18pt now stays full-size, 32pt
-reaches 15pt. When hint text wraps to 2+ lines, the marker anchors to
-whichever wrapped line has the MOST free space (measured width), not
-unconditionally the last line -- matters specifically at 32pt, where
-the last line can be nearly full while an earlier line has real room.
-
-STREAMING QUALITY DEFAULT REVERTED TO 480p (v26.07.21.29, Kaleb's
-request: "make the default 480p for everything on first boot").
-video_stream_quality briefly defaulted to 720p (v26.07.21.03); all 3
-default locations (App.__init__, both getattr() fallback call sites)
-reverted back to 480p, now matching downloads, which have always
-defaulted to 480p regardless of this setting either way. Side effect
-reverted along with it: the one-extra-round-trip re-resolve behavior
-in play_video_item() (documented in that function's own docstring)
-is back to being skipped on the common/default path, same as
-originally shipped -- only picking 360p or 720p now triggers the
-extra GETPUBMEDIALINKS call. Verified on a genuine fresh App instance
-(no settings file, i.e. real first-boot conditions): confirmed 480p
-at all 3 default locations.
-
-STREAMING QUALITY -- 360p ADDED (v26.07.21.28, Kaleb's request:
-"stream 340p if that's one of the options" -- confirmed 360p is the
-real tier, jw.org's video API genuinely serves 240p/360p/480p/720p,
-not invented). Streaming Quality was a 2-way toggle (480p<->720p);
-now a proper 3-way cycle via new STREAM_QUALITY_CYCLE = ["360p",
-"480p", "720p"], both real toggle call sites (Storage screen, reader
-Menu's Video Settings submenu) updated to use the same shared cycle
-list/index math instead of two separate hardcoded ternaries -- can't
-drift out of sync with each other now. Downloads UNCHANGED, still
-always 480p regardless of this setting. Cycle wraps correctly
-(360->480->720->360...), and 360p resolves to a real, distinct,
-correctly-sized file (~9MB vs 480p's ~16MB and 720p's ~27MB on the
-same video).
-
-VIDEO_SOURCES FULLY REBUILT TO MATCH JW.ORG'S REAL ORDER + COMPLETENESS
-(v26.07.21.27, Kaleb's request: "make sure the categories are nested
-properly, try to replicate the website's order"). Diffed EVERY level
-of jw_fetch.py's VIDEO_SOURCES against a live fetch of jw.org's real
-category tree (?detailed=1&clientType=www at every parent, not
-guessed) and found the incremental history since v26.07.15.09 had
-drifted from both real top-level order and real subcategory
-completeness. Top-level order now matches jw.org exactly: JW
-Broadcasting, Children, Teenagers, Family, Programs and Events, Our
-Activities, Our Meetings and Ministry, Our Organization, The Bible,
-Dramas, Series, Music, Interviews and Experiences (Governing Body
-Updates and Search Videos are this app's own additions, not real
-jw.org tree entries, kept in their original relative spots). Added 23
-real subcategories that were missing entirely: JW Broadcasting +1
-(Featured Videos), Programs and Events +3 (Special Programs, Gilead
-Graduations, Annual Meetings), Our Meetings and Ministry +5 (Tools for
-the Ministry, Improving Our Skills, Preaching Methods, Expanding Our
-Ministry, Sample Conversations), Series +10 (A Day in the Life of...,
-Apply Yourself to Reading and Teaching, Become Jehovah's Friend --
-Songs, Pure Worship -- Chapter Introductions, Reasons for Faith,
-Viewpoints on the Origin of Life, Walk Courageously With God, Was It
-Designed?, Website and App Help, What Your Peers Say, Where Are They
-Now?), Music +4 (Sing Out Joyfully to Jehovah -- Meetings, Convention
-Music Presentations, Making Music, Sing to Jehovah). One more real
-duplicate found and skipped (same pattern as the existing BibleBooks/
-DramasGoodNews dedups): "Children's Songs" (ChildrensSongs, under
-Music) is byte-identical to Children's own "Songs" (ChildrenSongs,
-same 85 items) -- kept only under Children. Verified NOT a duplicate,
-despite similar names: "Essential Bible Teachings" under Our Meetings
-and Ministry IS byte-identical to Series' own copy (27/27 same titles)
-so skipped there too, kept under Series in its real order position;
-but "Science" (OriginsLife, 11 items) vs Series' "Viewpoints on the
-Origin of Life" (SeriesOriginsLife, 10 items) and Teenagers'
-"Interviews and Experiences" (TeenWhatPeersSay, 35 items) vs Series'
-"What Your Peers Say" (SeriesWhatPeersSay, 9 items) are genuinely
-DIFFERENT categories despite superficially similar themes -- both
-kept as separate real entries.
-
-2 MISSING VIDEO CATEGORIES ADDED (v26.07.21.26, Kaleb's request: "are
-we missing any video categories?"). Found by diffing this project's
-jw_fetch.py VIDEO_SOURCES against a live fetch of jw.org's real
-VideoOnDemand root category tree (?detailed=1&clientType=www) -- not
-guessed. 3 real top-level categories were missing entirely: "Our
-Organization", "Dramas", and "Audio Descriptions" (Kaleb's call: only
-add the first two -- Audio Descriptions is a different use case,
-accessibility narration tracks layered onto videos already covered
-elsewhere, not new unique video content). Added to jw_fetch.py, same
-"subcategories" mechanism as Series/Children/etc, zero main.py changes
-needed:
-- "Our Organization" (VODOurOrganization): 6 real subcategories
-  (Reports From Around the World, Bethel, Organized to Accomplish Our
-  Ministry, History, Legal Developments, Bloodless Medicine).
-- "Dramas" (VODMovies): only 4 of its 5 real subcategories added.
-  The 5th, "The Good News According to Jesus" (DramasGoodNews),
-  deliberately left out -- substantially overlaps the existing
-  6-episode Series entry for the same content (list_good_news_items()).
-  Added: Bible Times, Modern Day, Extra Features, Animated.
-
-STALE COMMENTS FIXED AFTER v26.07.21.24 REMAP (v26.07.21.25, found
-during Kaleb's "any other bugs" audit request): two comments still
-described the OLD button layout as current after the L1/R1<->L2/R2
-swap. (1) main.py had a leftover "Full current video-control mapping"
-summary from v26.07.21.02 claiming L1/R1=+-10min -- removed rather
-than corrected in place, since the accurate mapping is now documented
-once in the v26.07.21.24 entry above it; two separate summaries would
-only drift again next time the layout changes. (2) native_video.py's
-KEY_PAGEUP/KEY_PAGEDOWN definitions were still commented "L1/R1
-big-skip buttons" -- fixed to reflect L2/R2. Not functional bugs (the
-actual button-handling code was already correct, confirmed via the
-real simulated-input test in the v26.07.21.24 entry) -- just
-documentation that would have misled the next troubleshooting session
-into believing the OLD layout was current.
-
-VIDEO BUTTON REMAP + BRIGHTNESS ON D-PAD (v26.07.21.24, Kaleb's
-request). Full current layout: D-pad L/R = seek +-10s (unchanged),
-D-pad U/D = mpv brightness +-5 (NEW, was seek +-1min), L1/R1 = seek
-+-1min (moved here from D-pad U/D), L2/R2 = skip +-10min (moved here
-from L1/R1, new joy_l2/joy_r2 params threaded through play_jw_video()
--> _translate_loop, both real call sites updated to pass JOY_L2/
-JOY_R2). Brightness is explicitly mpv's own live `brightness` video
-property (software, per-video-frame, via "i add brightness -5"/
-"o add brightness 5" in the bundled input.conf) -- deliberately NOT
-the OS/hardware backlight, per Kaleb's explicit correction when this
-was first discussed. Safe no-op on ffplay, which has no runtime
-brightness capability (only a launch-time flag, not adjustable while
-playing) -- 'i'/'o' aren't bound to anything in ffplay's default
-keymap.
-
-KEEPALIVE STOPS WHILE PAUSED (v26.07.21.23) -- SUPERSEDED at
-v26.07.21.35. The whole KEY_KEEPALIVE mechanism this built on top of
-(a synthetic keypress meant to reset muOS's idle timer) was disproven
-on real hardware and removed entirely -- see the entry below for the
-real, proven fix and why this specific pause-aware refinement doesn't
-carry over to it (the real fix suppresses idle behavior for the whole
-playback session, not per-pause-state). Kept as a one-line pointer
-rather than the original multi-paragraph entry, since none of its
-mechanics are current behavior anymore.
-
-VIDEO/AUDIO QUEUE BUTTONS UNIFIED (v26.07.21.43, Kaleb's request:
-"unify the music and video playback buttons on the menus like the
-start and download and shuffle and play all"). Real inconsistency,
-not a deliberate design choice: video used START=Play All, L2=Shuffle
-All; audio used the SAME physical buttons backwards -- Y=Play All,
-START=Shuffle All, meaning START alone meant two different things
-depending on mode. Unified to START=Play All, L2=Shuffle All for
-BOTH now, matching video's original layout (audio's Y was otherwise
-unused on this screen -- no search binding for audio -- so freeing it
-costs nothing). SELECT=Download and A=Stream/Play were already
-identical between the two modes, untouched. Hint bar text updated to
-match on both. The new popup menu (SCREEN_DOWNLOAD_BROWSE_MENU,
-v26.07.21.42) needed NO changes -- it dispatches by menu-item LABEL
-("Play All"/"Shuffle All"), not by which physical button was pressed,
-so it was already unaffected by this remap.
-
-DOWNLOAD BROWSE SCREEN'S HELP REPLACED WITH A REAL POPUP MENU
-(v26.07.21.42, Kaleb's request: "drop help menu and replace with pop
-up menu" -- the old Help (X button) on this screen only ever covered
-Search/Pub Code, never updated as Play/Play All/Shuffle All/Download
-got added, so it had become stale/incomplete for what this screen
-actually does now). New SCREEN_DOWNLOAD_BROWSE_MENU + draw_download_
-browse_menu(), same visual pattern as draw_library_menu() (panel
-overlay on top of the underlying screen) -- but with a REAL, DYNAMIC
-action list via new _download_browse_menu_items(app), built from the
-exact same dl_is_video/dl_is_audio/plugin-capability conditions the
-individual buttons already use, so the menu can never offer something
-unreachable or omit something that exists: video mode gets Stream/
-Download/Play All/Shuffle All/Search, audio gets Play/Download/Play
-All/Shuffle All, generic (books etc.) gets Download plus whatever of
-Search/Enter Pub Code the plugin actually supports. Each menu item
-calls the EXACT SAME App method its own dedicated button already
-does -- no parallel/duplicated logic. To make that possible without
-duplicating the inline search/pub-code handlers, extracted three of
-them (previously anonymous nested functions inside the Y/SELECT
-button handlers) into real, reusable App methods: open_video_search_
-entry(), open_category_search_entry(), open_pub_code_entry() -- the
-original Y/SELECT bindings now just call these too, so there's a
-single source of truth either way. X on this screen now opens the new
-menu instead of SCREEN_DOWNLOAD_HELP; hint bar updated "X Help" ->
-"X Menu". Scoped to ONLY this screen -- Sources/Categories still open
-the real Help overlay (Search/Pub Code info genuinely still applies
-there), confirmed untouched. REAL BUG CAUGHT AND FIXED during this
-edit: an early str_replace accidentally merged two adjacent lines
-together (missing newline), which would have been a syntax-adjacent
-bug; caught immediately via the routine post-edit compile check,
-fixed before it went any further.
-
-NATIVE TITLE/ALBUM-ART SUPPORT DURING AUDIO PLAYBACK (v26.07.21.41,
-Kaleb's request: "whatever the native app supports -- text title or
-album cover and title"). mpv: removed --no-video (added at v26.07.21.36
-to force audio-only) -- mpv already natively shows an MP3's embedded
-cover art (ID3 APIC frame) as its "video" if one exists, and does
-nothing extra otherwise; --no-video was exactly what suppressed that,
-no other code needed to enable it. Added --osd-playing-msg=${media-
-title}, mpv's own real property-expansion syntax, reading the file's
-own ID3 title tag directly -- also native, no plumbing. ffplay: -
-showmode 0 (already there from v26.07.21.40's input-focus fix) is
-ffplay's own "video" mode -- for an MP3 with embedded art, that IS the
-video stream, so this was already showing it natively with no further
-change needed. Added a new `title` param threaded through
-play_audio_file()/play_audio_queue() (from each item's own "title"
-field, both single-track and queue call sites in main.py) for
-ffplay's -window_title -- genuinely native, but flagged with an
-honest caveat: muOS's display stack has no window manager, so there's
-no title bar to actually render it in; included anyway since it's
-free and harmless. ffplay has no equivalent to mpv's --osd-playing-msg
-(a real on-screen text overlay) -- a genuine capability gap between
-the two players documented in the comment, not something withheld.
-
-AUDIO PLAYING BUT APP UNRESPONSIVE -- REAL BUG FIX (v26.07.21.40,
-Kaleb's report: "video works for playlisting, audio is backgrounding
-and makes the whole app unresponsive but music plays"). Root cause
-confirmed against ffmpeg's own mailing list (not guessed): both audio
-player configs skipped creating any real display surface -- mpv had
---no-video with no --fs at all; ffplay had -nodisp, which doesn't just
-hide video, it skips window creation ENTIRELY. Found the exact same
-complaint on ffmpeg-user's mailing list: "[does] -nodisp lose all
-keyboard functions like pause, seek etc?" -- confirmed yes, because
-ffplay's input handling is built on its own SDL window's event loop,
-so with no window to hold focus, this app's real uinput keypresses
-(sent via vkbd, same mechanism the working video path already uses)
-had nowhere to land. The player process itself was fine and kept
-decoding/playing audio (that pipeline doesn't depend on the window),
-but literally nothing -- including B/quit -- could reach it, matching
-Kaleb's exact symptom. Fixed by giving both a real (blank) fullscreen
-surface, mirroring the working video path exactly: mpv gets --fs
-added; ffplay drops -nodisp for -showmode 0 (still creates the real
-window, just shows nothing meaningful in it, unlike -nodisp which
-skips the window altogether) plus -fs. Could not fully verify on real
-hardware from this sandbox (no attached display to test actual SDL/
-KMSDRM window-focus behavior against) -- needs Kaleb's on-device
-confirmation, but the fix targets a confirmed, documented root cause
-rather than a guess.
-
-OFFLINE COPIES PREFERRED OVER STREAMING WHEN ALREADY DOWNLOADED
-(v26.07.21.39, Kaleb's request: "if we download the songs or video
-will the app default to that copy when playing?" -- until this, no,
-it always streamed even when a local copy already existed). New
-App._resolve_media_source(item, is_video) -- single shared helper used
-by every play_*_item()/play_*_queue_from() method, checks for a local
-file at the EXACT same folder/filename convention download_video()/
-download_audio() themselves already use (find_movies_dir()/
-find_music_dir() + basename(item["filename"])); returns the local path
-with is_local=True if found, else falls back to the item's own
-"_video_url"/"_audio_url" with is_local=False, unchanged from before.
-native_video.py additions: play_audio_file() gained an is_local param
-(mirrors play_jw_video()'s own, validated via os.path.isfile()); both
-play_audio_queue() and play_video_queue() gained an optional
-resolve_source(item)->(source, is_local) callback, called per item
-instead of the old hardcoded "always the remote URL" -- keeps
-native_video.py deliberately plugin-agnostic (it has no jw_fetch
-import and this doesn't change that; main.py supplies the actual
-resolution logic via a lambda). Falls back to the exact old hardcoded
-behavior when resolve_source isn't given, so nothing else changed.
-Single-item play (play_video_item()/play_audio_item()) checks the
-local copy FIRST, before any online quality-resolve step, since a
-downloaded file is already whatever quality it was saved at -- skips
-the network entirely when a local copy exists. Status toast now says
-"Playing" for a local copy vs "Streaming" for remote, so it's visible
-which one actually happened.
-
-PLAY ALL / SHUFFLE ALL EXTENDED TO VIDEO TOO (v26.07.21.38, Kaleb's
-request). Direct video sibling of the audio queue feature above --
-new native_video.play_video_queue(), new App.play_video_queue_from().
-Key difference from audio: every other button was already spoken for
-during video playback (all 4 shoulder buttons = seek/skip, D-pad =
-seek/brightness, Y/X = subtitle/audio track), so START (previous) and
-SELECT (next) are the in-playback queue-skip controls here instead of
-L/R -- confirmed via direct check of _translate_loop that neither was
-already bound to anything. On the browse screen itself: Y was already
-taken by video's own client-side title search and SELECT by download,
-so START="Play All" (from the currently-selected item) and L2
-(confirmed free on this screen)="Shuffle All". _translate_loop()
-extended with optional joy_start/joy_select/signal params -- backward
-compatible, a plain single-video play passes signal=None so the new
-buttons are silent no-ops then, same None-safe pattern every other
-optional control here already uses. idle-display suppression: added
-an internal `_manage_idle` flag to play_jw_video() so play_video_queue()
-can call it with _manage_idle=False per video and instead suppress
-ONCE for the whole queue itself (same reasoning as audio's queue) --
-this doesn't fire "per-video-suppress" at all during a queue session,
-only once total.
-
-SINGLE-TRACK AUDIO PLAY WAS MISSING IDLE-MUTE PROTECTION (v26.07.21.37,
-Kaleb's follow-up: "are we using the same [idle-mute] support for
-audio too?"). Checked the actual call graph rather than assuming --
-play_audio_queue() (Play All/Shuffle All) DID call suppress_idle_
-display()/restore_idle_display() correctly, but play_audio_file()
-itself deliberately doesn't (by design, so it nests cleanly inside a
-queue's single wrap instead of re-suppressing per track) -- which
-meant App.play_audio_item() (the A=play-single-track button) called
-it DIRECTLY with no suppression wrapped around it at all. A single
-song easily runs longer than muOS's default 120s idle_display timeout,
-so this was a real, same-class gap as the original video bug. Fixed
-by wrapping the call in play_audio_item() itself with the same try/
-finally-guaranteed suppress/restore pattern play_jw_video() already
-uses internally.
-
-IN-APP AUDIO PLAYBACK ADDED (v26.07.21.36, Kaleb's request -- audio
-sources previously only downloaded MP3s, no in-app playback at all).
-New native_video.py functions, mirroring play_jw_video()'s own
-discovery/fallback/idle-suppression shape but leaner (no seek/
-subtitle/audio-track/brightness controls -- none of that applies to
-audio): play_audio_file() (single track, audio-only mpv --no-video or
-ffplay -nodisp) and play_audio_queue() (plays a whole list back-to-
-back, sequential or shuffled). New App methods play_audio_item()/
-play_audio_queue_from() in main.py, wired into SCREEN_DOWNLOAD_BROWSE
-while dl_is_audio: A=play single track (was download-only before this
--- extends video's own A=play/SELECT=download convention to audio),
-Y="Play All" (sequential, starting from the currently-selected item),
-START="Shuffle All" (random order, always starts fresh regardless of
-selection), SELECT=download (unchanged, just un-guarded from its old
-video-only restriction). New "Audio Player" setting (Auto/mpv/ffplay,
-separate from Video Player) added to STORAGE_ACTIONS, draw-side AND
-nav-side (_storage_hidden()) hide conditions both updated together
-this time, matching this session's own earlier lesson about those two
-drifting apart. idle-display suppression (see v26.07.21.35 above) is
-applied ONCE for the WHOLE queue in Play All/Shuffle All, not per
-track -- avoids restarting the hotkey daemon once per song in a list
-that could be dozens of tracks long. Caught and fixed one real bug in
-this new code before it shipped: assumed the wrong return signature
-for the existing _write_mpv_input_conf() helper (guessed it returned
-a path+bool tuple; it actually returns a plain bool, with the path as
-a separate module constant) -- found via compile-time inspection of
-the real function, not by chance.
-
-VIDEO-PLAYBACK IDLE-MUTE -- REAL FIX (v26.07.21.35). Kaleb initially
-said v26.07.21.22's fix seemed "solid and working good" (v26.07.21.34),
-but then reported it actually muted itself during real playback --
-"mark this as solid" was premature; the synthetic-keypress "keepalive"
-theory (send a harmless key periodically to reset muOS's idle timer,
-same one a real button press resets) was WRONG. Root cause of the
-mute itself was correctly identified (muOS's DISPLAY_IDLE(), script/
-var/func.sh, mutes "Master"/dims backlight after a no-INPUT timeout,
-config/settings/power/idle_display, default 120s -- purely input-
-idle-driven, no concept of video playback), but the fix for it
-wasn't. Found the REAL, proven mechanism by examining a real, shipped
-muOS media app (Songo#5) that solves this exact problem -- its actual
-shipped scripts (real MustardOS/internal repo, not inferred):
-  set:    CAFFEINE on; SET_VAR config settings/power/idle_sleep 0;
-          SET_VAR config settings/power/idle_display 0; HOTKEY restart
-  remove: CAFFEINE off; restore both to their original values;
-          HOTKEY restart
-Not a timer reset at all -- directly disables the two config values
-DISPLAY_IDLE()/SLEEP() themselves check, then restarts the hotkey
-daemon (kills muhotkey/hotkey.sh, relaunches it) so the change takes
-effect immediately, since the daemon only reads these once at
-startup. Reimplemented in Python as suppress_idle_display()/
-restore_idle_display() in native_video.py, called once right before
-the player subprocess launches and restored in the SAME finally block
-that already guarantees stop_event/vkbd cleanup -- covers normal end,
-early quit, and crash alike. The old KEY_KEEPALIVE mechanism and its
-pause-tracking were removed entirely (kept as a documented dead end
-in native_video.py's own comments, not silently deleted) -- one real
-side effect of the removal: idle_sleep/idle_display are now
-suppressed for the WHOLE playback session rather than dynamically
-toggling with pause state, so the old "allow sleep while paused"
-refinement (v26.07.21.23) no longer applies; re-adding pause-aware
-toggling of this config-write+daemon-restart approach would mean
-repeated daemon kill/relaunch cycles on every pause/resume, not
-attempted without real hardware feedback on whether that's even
-noticeable/desirable. Correctly handles the edge case of a config
-value that was already "0" originally -- restored as "0", not
-mistaken for "unset" -- when playback ends.
-
-SELECT NOW TOGGLES IMMERSIVE MODE (v26.07.21.10, Kaleb's request --
-SELECT was a dead button in reading mode except on the rare JW-video-
-link selection). Now dual-purpose: downloads the video when
-_selected_jw_video_link() is not None (unchanged v26.07.20.05
-behavior), otherwise toggles Immersive Mode -- same code path/scroll
-clamp as the Menu's own Immersive Mode toggle. Hint bar label swaps to
-match: base READER_HINT_TEXT now reads "SELECT Immersive", swapped to
-"SELECT Download" via a label replace (not an insertion like before)
-when a video link is selected -- both variants verified near-identical
-total width at every Font Size via direct TTF metrics, so wrapping
-behavior stays consistent between the two, same as before this change.
-
-IMMERSIVE MODE FULLY RECLAIMS THE HINT BAR MARGIN -- was: hint text
-hidden but the reserved bottom margin stayed put, not truly
-full-screen. A global hint-bar shrink was considered first but ruled
-out -- most Font Sizes are already floored at 0px padding, nothing
-left to gain there. Immersive Mode reclaiming its own margin is the
-real lever: _reader_body_layout() takes an `immersive` param, all 4
-call sites pass app.immersive_mode/self.immersive_mode, and body_h
-skips subtracting hint_height() entirely when True. No repagination/
-wrap-cache invalidation needed -- self.scroll is a continuous line
-index into the already-wrapped line list, and the wrap cache is keyed
-only on (href, size_index) since word-wrap only depends on screen
-WIDTH, which this never touches -- so toggling just changes how many
-lines draw from the same scroll position. Toggle handler clamps
-self.scroll to the new max right away so the view doesn't lag one
-interaction behind. Gains +1-2 reading rows at most Font Sizes on
-both confirmed devices.
-1. Settings/Storage screen's toast notification used to render hidden
-   underneath the hint bar -- it was the one screen still using an
-   ad-hoc toast-position formula instead of the shared
-   _draw_status_bar() helper every other screen uses, which landed the
-   toast at/past the hint bar's own top edge on a near-full list.
-   Fixed by switching to _draw_status_bar(), same as every other
-   screen.
-2. Left stick support added -- was a missing feature, not a
-   device-specific bug: right stick (JOY_AXIS_RX/RY) existed already,
-   but left stick was never wired up on any device. JOY_AXIS_LX/LY
-   mirrors the right stick's exact mapping/behavior: Y axis = L/R page
-   turn, X axis = L2/R2 chapter nav, same edge-triggered one-push-
-   one-action pattern.
-3. Maximize Image mode now always lands exactly on 100% (true native
-   resolution) while stepping zoom, whenever the image is actually
-   larger than the viewport (zoom_min < 1.0 <= zoom_max). The
-   ~1.15x multiplicative zoom step could previously hop
-   straight over 1.0 without ever landing on it. Fixed in
-   _imgview_zoom_by(): if a step would cross 1.0 (old and new zoom on
-   opposite sides of it), snap to exactly 1.0 instead of the raw
-   stepped value; one extra press then continues normally past it in
-   either direction. No effect on small images that already need
-   >100% upscale just to fill the screen (zoom_min >= 1.0 -- 1.0 isn't
-   a reachable/meaningful stop for those).
-
-ZOOM-LEVEL TOAST: L/R zoom press in Maximize Image mode calls
-app.set_status() with "Zoom: N%" (N = _imgview_zoom*100, rounded) --
-same status_msg/_draw_status_bar mechanism every other screen already
-uses, so it gets the same fade-in/out and duration for free. Drawn
-bottom-anchored at `vh` (the image viewport's own bottom edge) so it
-sits just above the hint bar. Percentage is accurate even for small
-images that start above 100% (zoom_min > 1.0 when an image needs
-upscaling just to fill the screen) -- shows real "N% of native
-resolution" throughout, not just within the zoomed-in band.
-
-MAX IMAGE ZOOM: 125% of native (IMGVIEW_MAX_ZOOM_OVER_NATIVE) -- was
-hard-capped at 1.0x native (1 image px = 1 screen px, to avoid upscale
-blur), raised because small text/diagrams in some book images were
-still hard to read even at native resolution. Both places that used
-to hardcode the 1.0 ceiling (_imgview_reset() and the thumb-to-full-
-res progressive-upgrade path in draw_image_view()) now read from this
-one shared constant instead, avoiding the two-places-drift bug class.
-Filtering is still nearest-neighbor (unchanged), so 125% still looks
-like a crisp zoom, not a smoothed upscale. Images that already need
->125% upscale just to fill the screen are still governed by zoom_min
-instead (unchanged floor logic).
-
-FULL GHOST-ROW BUG-CLASS AUDIT (v26.07.21.04, prompted by Kaleb's
-Settings report -- checked every draw_* function for `continue`-based
-row hiding and every navigation block for a matching hidden-row skip).
-Found and fixed a THIRD instance: Library Menu's UP/DOWN had NO
-hidden-row check at all (not just incomplete) -- "Download Books" is
-hidden via `continue` in draw_library_menu() when DOWNLOAD_PLUGINS is
-empty, but nothing stopped the cursor landing on it. Fixed with the
-same _xxx_hidden()-mirrors-the-draw-loop pattern as _storage_hidden()/
-_menu_hidden(). Everything else audited clean: Theme Menu, Video
-Settings, Theme Select, all Download-flow screens, TOC, Bookmarks
-don't conditionally hide any rows, so there's nothing for nav to
-desync from. Main reader Menu and Storage were already correct/fixed.
-Lesson (now recorded 3x): any new conditional row-hide in a draw_*
-loop MUST get a matching entry in that screen's navigation-hidden
-check, or ship with NO hiding at all.
-
-DEFAULT STREAMING QUALITY -> 720p (v26.07.21.03, Kaleb's request):
-self.video_stream_quality now defaults to "720p" (was "480p") in all
-3 spots it's read (App.__init__ + 2 getattr() fallback call sites --
-grepped to confirm no others exist). Downloads are UNCHANGED, still
-default 480p (jw_fetch.py's PREFERRED_VIDEO_LABEL) -- this setting only
-ever affected streaming. Side effect worth knowing: browse-list items'
-cached _video_url is resolved at the download default (480p), so the
-existing re-resolve-if-quality-differs logic in play_video_item() now
-fires on the common/default path (720p) instead of being skipped on
-it -- one extra GETPUBMEDIALINKS call per browse-list play at the new
-default, falls back to the cached 480p URL on any failure. Search
-Videos playback unaffected either way (always resolves fresh).
-
-AUDIO TRACK CYCLE, X BUTTON (v26.07.21.02, Kaleb's request): same
-shared-key pattern as the Y/subtitle mapping above -- X sends 'a',
-ffplay's own default "cycle audio channel" key. mpv's own default
-audio-cycle key is '#', not 'a', so the bundled input.conf adds
-"a cycle audio" explicitly. joy_x=JOY_X added to both play_jw_video()
-call sites, both param-order-matched through _translate_loop. (Full
-current video-control mapping is documented once, in the v26.07.21.24
-entry above -- not repeated here to avoid two summaries drifting out
-of sync with each other the next time the layout changes.)
-
-POLICY NOTE, NO CODE CHANGE (v26.07.17.17, Kaleb's explicit request):
-APP_HELP_PARAGRAPHS (the in-app Help screen) stays BASICS ONLY --
-installing books, core button controls, "press X to find everything
-else." Do NOT add a line item per new feature/toggle as they ship --
-see the comment directly above APP_HELP_PARAGRAPHS's definition for
-the full reasoning. This applies to the in-app Help screen ONLY, not
-this AI NOTES section or main.py's own changelog, which should keep
-documenting changes as usual.
-
-THREE FIXES FROM KALEB'S SCREENSHOT (v26.07.17.16):
-1. Storage screen had a blank, never-actually-selectable gap between
-   "Remove Ports Shortcut" and "Help" -- draw_storage()'s row loop
-   correctly SKIPPED drawing hidden rows, but still computed each row's
-   Y position from the raw STORAGE_ACTIONS index, which counted the
-   skipped row's height anyway. Fixed with `row_pos`, a counter that
-   only advances for rows actually drawn. CORRECTION (v26.07.21.01,
-   Kaleb's real on-device report): the claim below that navigation was
-   "never affected" was WRONG -- _storage_hidden() (used by UP/DOWN) was
-   missing 2 of the 7 hide conditions draw_storage() actually uses
-   ("Remove/Reinstall Ports Shortcut"), so the cursor COULD land on a
-   hidden row -- invisible selection (no highlight box drawn at all),
-   plus the scroll window centering on that hidden index made a
-   neighboring row (often "Help") appear to jump mid-scroll. Fixed by
-   making _storage_hidden() mirror draw_storage()'s conditions exactly;
-   both lists now verified symmetric (7/7 match). Lesson: any future
-   conditional row-hide MUST be added to both places, or this exact bug
-   class recurs a third time.
-2. Help screen (SCREEN_HELP) and Credits/License (SCREEN_LICENSES) now
-   support L/R to jump 10 lines, same convention as Chapters/Bookmarks'
-   existing L/R jump-10 (see Controls docstring at top of file). Hint
-   bar text updated to match.
-3. Download Help (SCREEN_DOWNLOAD_HELP) got the same L/R treatment for
-   consistency -- it's a separate, non-refactored function
-   (draw_download_help(), NOT the shared _draw_static_scroll_overlay()
-   Licenses/Help use) but shows near-identical hint text, so leaving it
-   out would have made the hint bar claim L/R worked when it didn't.
-Hint text length checked against _HINT_CALIBRATION_TEXTS -- "UP/DOWN
-Scroll   L/R Jump 10   B Back" is well under both calibration strings'
-length, so no repeat of the v26.07.17.08 hint-bar-overflow bug.
-
-IMAGE DIMMING BECAME NIGHT MODE'S OVERALL STRENGTH (v26.07.17.15,
-Kaleb's request). The same Off/Low/Med/High "Image Dimming" row now
-scales BOTH the image overlay alpha (unchanged, IMAGE_DIM_ALPHAS) AND
-how far _night_mode_adjust_colors()'s whole-palette warm/dark shift
-goes (NIGHT_MODE_STEPS_BY_LEVEL: 0/2/4/6 steps), instead of the color
-shift always running at a fixed 6 steps. New module global
-IMAGE_DIM_LEVEL mirrors app.image_dim_level (same reason
-NIGHT_MODE_ENABLED is a global, not an App attribute -- apply_theme()
-and the night-mode helpers are plain functions with no `app` in
-scope), kept in sync via the new set_image_dim_level() choke point
-(both the Reader popup Menu row and the Storage row now go through it
-instead of writing app.image_dim_level directly) -- this also
-re-applies the current theme immediately if Night Mode is already on,
-same "changes take effect right away" pattern as set_night_mode().
-Boot load order matters here too, same lesson as v26.07.17.13's fix --
-IMAGE_DIM_LEVEL is loaded BEFORE the boot apply_theme() call, not
-after.
-
-IMAGE DIMMING ADDED TO READER POPUP MENU (v26.07.17.14, Kaleb's
-request). Was Storage-only (Cycle Image Night Dimming); now also a flat
-"Image Dimming" row in the Reader popup Menu, cycling Off/Low/Med/High
-on select, menu stays open -- same dual-access pattern already
-established for Sound Effects (popup Menu row + Storage toggle,
-deliberate, see that feature's own comment) and now Night Mode. Chose
-a flat row over a submenu after discussing tradeoffs with Kaleb --
-Storage already serves as the "settings hub" for the Storage-side
-toggle, and 2 items didn't justify a whole new screen the way the
-existing redundancy-pass sessions were actively trying to AVOID adding.
-
-REAL BUG FIX (v26.07.17.13, Kaleb caught it: "Default theme, no
-changes"): App.__init__'s boot apply_theme(load_settings().get(
-"theme_index", 0)) call ran BEFORE NIGHT_MODE_ENABLED was loaded from
-settings (that load was further down in __init__) -- so a Night Mode
-setting persisted ON from a previous session had zero effect on the
-very first theme drawn at launch; only a manual re-toggle within that
-session would apply it. The v26.07.17.10 comment on the old load site
-even claimed "apply_theme() below/elsewhere in __init__ already runs
-once boot settles" -- that was wrong, there is no later apply_theme()
-call in __init__. Fixed by moving the NIGHT_MODE_ENABLED load to
-directly before the boot apply_theme() call. In-session toggling (the
-Reader popup Menu's "Night Mode" row -> set_night_mode()) was never
-affected -- that path always re-applies immediately.
-
-CRASH FIX (v26.07.17.12, Kaleb's real-hardware bug report): Night
-Mode's image dim overlay (_draw_image_dim_overlay(), added v26.07.17.09)
-called SDL.SDL_BLENDMODE_BLEND -- an attribute lookup on the ctypes
-CDLL object -- but SDL_BLENDMODE_BLEND is a plain Python int constant
-defined at module level (line ~2325, near SDL = _load_lib(...)), not
-something the loaded library itself exposes. That raised AttributeError
-on the very first call, i.e. the first image drawn -- for most books
-that's the cover, so this crashed instantly opening anything with a
-cover image (Kaleb's report: Awake!/Watchtower). Fixed by using the
-bare SDL_BLENDMODE_BLEND constant, matching the ONE other correct
-usage already in this file (SDL_SetTextureBlendMode's call site).
-Should have been caught before shipping -- there was no headless SDL
-render test run against this code path in the v26.07.17.09-11 sessions
-(noted as a gap in each of those AI notes entries at the time). If a
-future session adds ANY new SDL_* call, actually exercise the code
-path (headless harness or have Kaleb test) before calling it done --
-static syntax/AST checks (what WAS run) do not catch AttributeError
-on ctypes attribute access.
-
-NIGHT MODE EXTENDED TO WHOLE PALETTE + HUE-RETENTION FIX (v26.07.17.11,
-Kaleb's request). UNTESTED on real hardware. Two changes to
-_night_mode_adjust_colors():
-1. Was text/hint_text only (v26.07.17.10) -- now warm-shifts the WHOLE
-   non-skipped palette together (bg, panel, text, dim, link, link_sel,
-   hint_bg, hint_text, accent, menu_sel_bg), per Kaleb's "purple should
-   still look somewhat purple, just shifted a bit" / "extend to
-   everything" request. Order matters: surfaces (bg/panel/hint_bg/
-   menu_sel_bg) shift FIRST via _warm_shift() (no contrast check),
-   THEN text/hint_text/link/link_sel/accent/dim shift via
-   _warm_shift_toward() checked against the NEW (already-shifted) bg/
-   hint_bg, not the original -- so contrast always reflects what's
-   actually on screen. text/hint_text hold 4.5:1 AA; link/link_sel/
-   accent/dim hold 3:1 (WCAG's large/graphical-element floor).
-   `warning` stays untouched (fixed alert color, same convention
-   generate_random_theme() already uses).
-2. REAL BUG CAUGHT + FIXED before shipping: the first version of
-   _warm_shift() used a fixed per-step delta (R+3/G-2/B-5). Fine for
-   bright text values, but on LOW-value surface colors (bg/panel start
-   dark by design) it clamped straight to 0 fast -- a purple bg's B
-   channel (e.g. 28) lost nearly its whole blue component in 6 steps,
-   collapsing to near-brown (38,4,0) instead of a warmed purple. Caught
-   in a standalone sandbox test with a synthetic purple theme (not a
-   real THEMES entry, just a check case) BEFORE this shipped. Fixed by
-   switching to PROPORTIONAL deltas (R approaches white by 1.5% of
-   headroom/step, G decays 1.5%/step, B decays 3.5%/step) -- scales
-   with each channel's own value instead of a flat subtraction, so hue
-   survives.
-Not yet run through the real App()/SDL path or on-device.
-
-NIGHT MODE ADDED (v26.07.17.10, Kaleb's request). New Reader popup Menu
-toggle ("Night Mode" row, NIGHT_MODE_ENABLED global + set_night_mode()),
-UNTESTED on real hardware. Applies at apply_theme() time via
-_night_mode_adjust_colors() -- NOT baked into THEMES/CUSTOM_THEMES:
-- Dim Warm/Deep Amber/Red Shift (NIGHT_MODE_SKIP_NAMES) are already
-  hand-tuned dark+warm -- Night Mode skips their color shift entirely,
-  ONLY the image dim overlay applies (forced to at least "Low" while
-  Night Mode is on, see _draw_image_dim_overlay()'s night-mode check).
-- Any OTHER theme (Default, Adventure, a randomized theme) that
-  ALREADY measures dark+warm (bg relative luminance <=0.03, text R-B
-  >=18) is also left untouched -- Kaleb's "if a randomized theme is
-  already within bounds don't adjust."
-(text/hint_text-only shift superseded by v26.07.17.11 above -- kept
-this entry for the skip-condition rationale, which is unchanged.)
-
-READING-AREA CONTRAST WIDENED + NIGHT IMAGE DIMMING ADDED (v26.07.17.09,
-Kaleb's request). Three changes, UNTESTED on real hardware:
-1. generate_random_theme() (see its docstring): bg_l used to be locked
-   to 0.05-0.09 (always near-black) with text_l always maxed toward
-   white -- only hue varied, so randomized themes' reading area barely
-   changed look to look. Now bg_l rolls 0.04-0.22 and text_l is solved
-   toward a randomly-picked 4.8-12:1 contrast target (research-backed
-   comfort band, see the function's comment), so bg ranges from near-
-   black to soft dark-gray/tinted and text brightness tracks it.
-2. Default theme's bg/text (18,18,22)/(225,225,230), 14.3:1, softened to
-   (26,26,31)/(208,208,213), 11.3:1 -- lands inside the same comfort
-   band. NOTE: v26.07.10.10/.11's history (see Default theme's own
-   comment) shows an EARLIER attempt to lighten this bg was reverted
-   after Kaleb saw it live and wanted near-black back -- this v09 change
-   is a fresh, explicit request in this session, not a re-revert; if a
-   future session gets pushback on this again, that's the precedent to
-   check.
-3. New Storage toggle "Cycle Image Night Dimming" (app.image_dim_level,
-   0-3, persisted, default 0/Off) -- draws a flat COL_BG-tinted alpha
-   rect over images via _draw_image_dim_overlay(), called right after
-   SDL_RenderCopy at both image draw sites (inline reader + Image
-   Maximize Mode). Alpha levels (IMAGE_DIM_ALPHAS) are eyeballed, not
-   measured against a real photo yet.
-None of this has been run through the real App()/SDL headless harness
-or on-device yet -- next session should do both before calling this
-done.
-
-LIBRARY HINT BAR RECALIBRATED + VERIFIED AT EVERY FONT SIZE
-(v26.07.17.08, Kaleb's request to double-check the START Pin change).
-REAL BUG CAUGHT: _HINT_CALIBRATION_TEXTS[1] (the string that drives
-_hint_pt()'s shared bar-height/font-size math, per the v0.1.153
-history below) still had the OLD, shorter Library hint text -- adding
-"START Pin" in v26.07.17.07 made the actual lib_hint string longer
-without updating the calibration it's measured against, exactly the
-mismatch class v0.1.153 already documents. Fixed by updating the
-calibration string to match -- zero line-width or bar-height overflow
-at any Font Size after the fix, in either Library hint variant.
-
-PIN MOVED FROM POPUP MENU TO HINT BAR (v26.07.17.07, Kaleb's request).
-Library hint bar (both variants) now reads "...Y Sort  START Pin...".
-"Pin/Unpin Selected" removed from LIBRARY_MENU_ITEMS: 9 rows. START
-already called toggle_pin() unconditionally on the Library screen
-(unchanged since v26.07.12.05's X/START swap) -- this just makes that
-existing shortcut discoverable and drops the now-redundant menu row,
-same shape as the Sort/Add Bookmark cleanup earlier this week, just in
-the opposite direction (hint bar gained a row instead of losing one).
-Mark Finished/Unfinished (SELECT) deliberately left alone -- still
-menu-only, per Kaleb's earlier explicit call not to touch that one.
-Flagged but not blocking: the L2-Download hint variant is now 8
-shortcuts and will likely wrap to 2 lines (draw_hint() handles this
-gracefully, just uses more vertical space) -- the same crowding that
-got Pin pulled out of the bar back in v26.07.09.02 in the first place.
-
-SELECTION-HIGHLIGHT GLIDE REMOVED ENTIRELY (v26.07.17.05, Kaleb's
-on-device report: visible text flicker while the cursor moves).
-App.eased_sel_y() (and its backing state, self._sel_anim /
-_sel_anim_active / SEL_ANIM_SNAP_EPSILON_PX, plus the redraw-forcing
-hook in main()) is gone. All 15 call sites across every list screen
-(Library, Reader menu, Library menu, Theme menu, Theme select,
-Storage, Chapters, Bookmarks, all Download screens) now assign the
-selection highlight's Y position directly from the target row -- an
-instant snap, same as before the glide existed. Likely cause: the
-glide forces a full-screen redraw every frame while converging (~2-3
-frames per selection change), which means the row text gets
-re-rendered via SDL_ttf multiple times per press instead of once --
-not reproducible in this project's headless SDL_VIDEODRIVER=dummy
-tests, only visible as a real rendering artifact on the actual ARM
-hardware. The detailed history of how the glide was built, debugged,
-and extended (v26.07.16.07 through .16.35) is preserved further below
-for archaeology, same as the Render Scale Quality entry's approach --
-not reproduced here since the feature it describes no longer exists.
-
-DYNAMIC-LABEL FORMAT UNIFIED TO COLON STYLE (v26.07.17.04, Kaleb's UI
-cleanup request). Every menu row that appends live state/context to
-its label now uses "Label: value" -- Filter, Immersive Mode, and
-Sound Effects already did; converted the remaining parenthetical-style
-holdouts to match: Theme menu (Regenerate/Save Regenerated/Rename/
-Delete Theme), Library menu (Clear All Finished count, Continue
-Reading's "none yet" fallback), and Storage screen (Clear Image Cache,
-Clean Up Orphaned Bookmarks, both Backup/Restore rows, Pre-render/
-Cancel Pre-render). Deliberately left alone: the Bookmarks list's
-"label (timestamp)" -- that's a user-authored bookmark label with a
-metadata annotation on a list of many items, not a fixed action row's
-state, so colon-after-freetext would read worse, not better.
-
-POPUP MENU REDUNDANCY PASS (v26.07.17.01-.03, Kaleb's UI cleanup
-request): both popup menus (Reader's MENU_ITEMS, Library's
-LIBRARY_MENU_ITEMS) were checked row-by-row against their own screen's
-hotkey/hint bar for actions with two paths to the same result.
-Current state:
-- Reader menu: "Add Bookmark" removed -- it duplicated the START
-  hotkey exactly (same bookmark_here() call), and START Bookmark is
-  already spelled out in READER_HINT_TEXT. MENU_ITEMS: 10 rows.
-  Checked, kept as-is: Chapters (L2/R2 step one chapter at a time vs.
-  the menu's full jump-to list -- different action, not a duplicate);
-  Font Size +/-, Themes..., Immersive Mode, Sound Effects have no
-  reader-screen hotkey at all.
-- Library menu: sort's 5 individual rows ("Sort: Title A-Z" etc.,
-  each directly setting lib_sort_mode and closing the menu) were first
-  collapsed into one "Sort: Cycle" row (mirroring "Filter: Cycle"'s
-  existing pattern, reusing the app.cycle_sort_mode() method that
-  already existed and was already bound to Y on the Library screen),
-  then removed from the popup entirely once the redundancy with that
-  same Y hotkey (also shown in the Library hint bar) was flagged.
-  LIBRARY_MENU_ITEMS: 10 rows. Sort is now reachable ONLY via Y on the
-  Library screen -- no popup path at all.
-
-RENDER SCALE QUALITY: NO HINT SET, DELIBERATELY (v26.07.16.24,
-Kaleb's final call). Tried and reverted across .21-.23: SDL2's
-default render scale quality is "nearest" (point sampling). .21
-briefly set it to "linear" everywhere non-1.0 scale; .22 narrowed
-that to linear-only-for-downscale (RG28XX/RG35XX/RG40XX at 0.889x,
-where nearest-neighbor that close to 1:1 can genuinely drop a thin
-font stroke) while keeping nearest for the upscale cases (TrimUI
-Brick/TrimUI Smart Pro, where nearest just duplicates pixels -- a
-sharp-retro-handheld LOOK, not a correctness issue). Kaleb weighed
-.22's real-but-marginal downscale fix against "keep everything crisp,
-one simple rule, no per-device branching" and chose the latter --
-0.889x isn't a dramatic enough ratio for the effect to be a given
-correctness problem worth the added complexity. Net result: NO
-SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, ...) call anywhere in this
-file -- SDL2's own "nearest" default applies uniformly to every
-device, native and scaled alike. If this is ever revisited, .22's
-reasoning/verified per-device hint values are preserved in this
-project's chat history, not reproduced here to avoid re-accumulating
-changelog entries for a feature that's now simply absent.
-
-TOAST FADE-IN LENGTHENED TO MATCH THEME TRANSITION (v26.07.16.36,
-Kaleb's request). STATUS_FADE_IN_SECONDS 0.12 -> 0.18, matching
-_THEME_TRANS_DURATION exactly (the theme color fade Kaleb said feels
-right). Fade-OUT (0.25) untouched -- not part of this request. Exit toast
-(forces alpha=255 unconditionally, see .34) is unaffected by this.
-
-SELECTION GLIDE WAS NEVER ACTUALLY GLIDING (v26.07.16.35, Kaleb's
-report: "I've never seen it move"). Confirmed real, not perception --
-eased_sel_y()'s dt was measured against whenever the key was last
-touched AT ALL (the previous button press, easily 300ms-several
-seconds earlier on a screen that only redraws on input), not against
-when the target actually changed. So the first frame after any real
-selection change always computed a large dt, frac clamped to 1.0
-immediately, and the "close enough, snap" branch fired WITHOUT ever
-setting _sel_anim_active -- so the forced-continuous-redraw chain
-that's supposed to let a glide progress over several frames never
-even started. Every glide, on every list screen, every single time,
-was completing in one invisible step. Fixed by tracking the last-seen
-TARGET per key (not just the animated value): when target_y differs
-from what was last recorded, that frame now ARMS the glide (resets
-the clock, forces _sel_anim_active=True, holds the highlight at its
-OLD position) instead of interpolating against stale elapsed time --
-the actual glide then plays out for real starting the NEXT frame.
-Affects all list screens that share this one helper (Library, Menu,
-Chapters, Storage, Bookmarks, Theme Menu, plus the download screens).
-
-Also checked the status-toast fade Kaleb described as "almost
-unnoticeable" while investigating -- that one is NOT a bug. It's
-legitimately just fast -- that duration was Kaleb's own original
-request (see SUBTLE ANIMATIONS entry) for a snappy, non-decorative
-feel. Left as-is; flagged for Kaleb to say if he'd like it lengthened,
-since that's a design preference, not a defect.
-
-EXIT TOAST TEXT INVISIBLE + SPLASH VOLUME MATCHED TO BUTTONS
-(v26.07.16.34, Kaleb's reports). Two unrelated small fixes:
-(1) The "Exiting Pico Reader" toast shown on quit had NO visible text
--- confirmed the pill background WAS drawing (opaque, unconditional),
-only the text inside was invisible. Root cause: the exit sequence
-calls set_status() then renders the SAME frame immediately via the
-normal draw_reader()/draw_library() path, which draws the status bar
-at alpha=app.status_alpha() -- a 120ms fade-in measured from
-set_status()'s own timestamp. At 0ms elapsed (the only frame that
-ever renders here, since SDL_Delay() blocks right after), that's
-alpha~0. This exact class of bug was already fixed once, for the
-large-page loading toast (search this file for "alpha forced to
-255"), but that fix predates "Exit App" existing as a second toast
-call site, which never got the same treatment. Fixed by redrawing the
-status bar again on top with alpha=255 forced, right before the
-blocking SDL_Delay.
-(2) Boot-splash "PICO READER" typing sequence's 11 blips
-(_build_intro_theme()) were playing at volume=0.025 -- roughly 1/6 of
-"nav"'s 0.16, despite using the literal same 520->880 Hz bloop shape.
-Matched to 0.16, within the existing 0.11-0.18 button range from the
-v26.07.16.05 volume audit.
-
-CHAPTER-OPEN ANCHOR LOOKBACK NOW INCLUDES A NEARBY IMAGE
-(v26.07.16.33, Kaleb's report: "The magnificent possession" epub
-opened its story at ~2% instead of the true top). Investigated with
-the real uploaded epub -- NOT a bug at the "starts at 2%" level: the
-book's own toc.ncx anchor (#pgepubid00000, Gutenberg's own converter
-output) correctly points at the "<h1>The Magnificent Possession</h1>"
-heading, deliberately skipping ~2667 chars of Gutenberg boilerplate
-(title/author/license-notice front matter) above it -- exactly right,
-confirmed by reading the raw HTML. The REAL bug, found while
-verifying: the existing off-screen-anchor lookback (target_line - 2,
-added for NWT Psalms headings) isn't enough when a story ILLUSTRATION
-sits between the boilerplate and the heading -- this book has one
-(frontispiece image + italic caption) 4 lines above the title, so the
-old fixed "-2" landed on the caption but scrolled the image itself
-one line out of view. Fixed in _ensure_page_built()'s anchor-
-resolution branch: after the existing -2 lookback, scan up to 12
-lines further back for a "[IMG]" placeholder line and extend scroll
-to include it if found. Strictly additive -- for any anchor with no
-image nearby (every Psalm, every Bible verse, plain-text headings)
-the scan finds nothing and behavior is byte-for-byte unchanged from
-before. "The Magnificent Possession" and "Youth" were added to the
-ongoing regression EPUB set as coverage for this case.
-
-SETTINGS: HELP + CREDITS/LICENSE ADDED (v26.07.16.24-.32, Kaleb's
-request). Two new static-scroll-overlay rows on Settings, sharing one
-helper (_draw_static_scroll_overlay()) with the existing downloader
-X-Help overlay -- one implementation for all three instead of three
-near-copies. Every heading gets a blank line before AND after
-(de-duped so they never double up), except the FACE_MENU_LOGO+
-"PICO READER" lockup, which stays adjacent as one unit (same as the
-boot splash/menu sidebar version) via a targeted exception in that
-same de-dup pass.
-"Credits / License" (SCREEN_LICENSES, LICENSE_PARAGRAPHS): centered
-thank-you block (logo lockup, name, "Happy Reading," / "Kaleb", GitHub
-bug-report link at github.com/PuppetHoundZ/PicoReader -- confirmed
-live/public), then the full MIT + bundled-font (DejaVu, Bitstream
-Vera-derived) license text, kept in sync with LICENSE.md/
-FONT_LICENSE.txt -- text spot-checked phrase-for-phrase against
-LICENSE.md, no mismatches.
-"Help" (SCREEN_HELP, APP_HELP_PARAGRAPHS): where to put .epub files
-(ROMS/Book Reader -- muOS's existing shared Book Reader content
-folder, same one LIBRARY_DIR/find_books_dir() already uses, NOT a
-PicoReader-specific folder) and the real button-control reference --
-X opens a menu (Reader popup or Library menu); Y toggles fast-scroll
-in the Reader and cycles sort order in the Library; B EXITS THE APP
-from the Library specifically, not just "back" -- all confirmed
-against handle_button()'s actual dispatch, not assumed (an earlier
-draft got X/Y and B wrong; caught and fixed during verification).
-Also found and fixed a real
-ImageLoader race while auditing this: request() seeds self._results[key]
-before queuing, but a concurrent is_relevant() pop() for a different
-queued request on the same key could remove it before a later
-write landed, raising a bare KeyError. Fixed via
-ImageLoader._seed_result_entry(), called at all four of _process()'s
-write sites -- see that method's own docstring. Not something normal
-one-book-per-session usage would trigger, but real, and now closed.
-.32 (Kaleb's request, "did we clean up changelog/AI notes"): honest
-answer was partial -- collapsed this SAME entry's own .24-.31
-iteration diary down to current-state-only (was ~74 lines of
-round-by-round notes, now ~35), and separately consolidated the
-unrelated cold-wrap-ramp tuning trio (.11/.13/.14) the same way,
-further down this notes block. Re-verified with the same 525-check
-sweep after both edits: 0 errors, unchanged.
-
-DEVICE PROFILE DETECTION REFACTORED INTO A TABLE (v26.07.16.20,
-Kaleb's request: "adapt to ratios without breaking the 720-wide
-logic"). Replaced the .15-.19 hand-written if/elif chain (one branch
-per device family, added one at a time as each new device came up)
-with a single data-driven rule: CANVAS_HEIGHT_PROFILES is a list of
-(canvas_height, label) pairs -- currently 720 (1:1), 480 (3:2), 540
-(4:3) -- and _pick_canvas_height(dev_w, dev_h) just picks whichever
-height's aspect ratio (SW/height) is numerically closest to the
-device's real aspect ratio. SW stays hardcoded 720 everywhere,
-completely untouched by this refactor. SDL_RenderSetLogicalSize's own
-scale-to-fit does the rest automatically: scale lands on exactly 1.0
-(zero bars) whenever the device's aspect ratio exactly matches a
-table entry (RG34XX/RG34XX SP against 480, RG28XX/RG35XX/RG40XX and
-TrimUI Brick against 540), or adds bars on whichever axis has
-leftover room when it's a genuine mismatch (TrimUI Smart Pro's 16:9
-against the nearest available 3:2 entry -- confirmed this reproduces
-the EXACT same decision as .19's hand-picked branch: 720x405, an
-exact-16:9-match canvas, would trade real reading rows for
-eliminating already-blended bars, so 3:2/480 -- more content, some
-bars -- is deliberately the better choice for a reading app,
-verbatim confirmed with Kaleb this session).
-TO ADD A NEW CANVAS PROFILE (e.g. a future device with a genuinely
-different aspect ratio that deserves its own bucket instead of being
-matched to an existing one): add one (height, label) tuple to
-CANVAS_HEIGHT_PROFILES. Nothing else needs to change -- no new
-branch, no new SDL_CreateWindow call, no touching _SX/_SY (still
-hardcoded 1.0, still never derived from SH -- see that block's own
-comment for why). RGCubeXX-H's exact-match path (720x720, no
-fullscreen flag, no scaling) is kept as a special case OUTSIDE the
-table on purpose -- v0.1.148's original zero-regression-risk
-guarantee on the primary dev device, unchanged since before any of
-this profile work started.
-CONFIRMED ON REAL HARDWARE for the 480 (3:2) profile, via RG34XX-SP
-(v26.07.21.07, Kaleb's on-device test -- 720x480 canvas rendered
-correctly, no stretch/crop artifacts). Still NOT YET confirmed for the
-540 (4:3) or TrimUI Smart Pro's 3:2-match path -- those remain
-source-verified-only until real hardware exists to test them. The
-.15-.19 iterations that led here (native
-RG34XX profile, two different 4:3 additions, and the 16:9-vs-3:2
-TrimUI Smart Pro decision) are fully superseded by this table and
-not reproduced separately -- their real content is already stated
-above (the table itself, and the note on why TrimUI Smart Pro maps
-to 3:2 instead of an exact-16:9 canvas).
-
-COLD-WRAP RAMP (current shape, finalized v26.07.16.14):
-cold_wrap_slice_budget() is a single smooth quadratic curve, no
-breakpoint, spanning the full 4.0s window, 100ms -> 2000ms (t=0s->
-100ms, t=1.0s->~219ms, t=2.0s->~575ms, t=3.0s->~1169ms, t=4.0s->
-2000ms). Shared by both the foreground cold-wrap branch and
-_step_bg_prerender() -- one function, not two copies of the same
-formula. An earlier two-phase version (flat 50-150ms for 1.0s, then
-quadratic to 2000ms, with COLD_WRAP_PHASE1_SECONDS/
-_PHASE1_END_SLICE_SECONDS constants) was tried and fully replaced --
-if either of those two names shows up anywhere, that's stale/
-historical, not live code. NOT yet confirmed on real hardware for
-responsiveness feel.
-Two related investigations from the same session, negative results
-worth remembering so they're not re-tried: word-width cache reshaped
-from dict[(id(font), word)] to nested dict[id(font)][word], on a
-theory it'd avoid a tuple-hash cost -- real A/B timing showed no gain
-(8.88s vs 9.04s over 3 runs each), reverted (see
-App._measured_word_width()'s docstring). _flush_line()'s real-width
-verification loop was profiled directly: 0 of 64,398 calls on the
-real stress page ever needed more than one check, so there's no
-repeated-recomputation to chase there.
-
-SECOND ANIMATION EDGE-CASE AUDIT (v26.07.16.10, Kaleb's request to keep
-digging): 10 additional scenarios checked across all three animation
-mechanisms. One defensive fix made (cheap insurance, not a live bug):
-_tick_theme_transition()'s frac calculation now guards against
-_THEME_TRANS_DURATION being 0 (division-by-zero), same pattern as
-eased_sel_y's existing time_constant<=0 guard -- the real constant is
-a hardcoded 0.18, never 0 in practice, but this protects against a
-future accidental edit.
-
-All 5 scenarios from the FIRST audit (test_animation_bug_hunt.py) still
-pass: screen-switch mid-glide (exactly 1 harmless extra redraw, no
-persistent leak), rapid theme-scrubbing (19 interrupted transitions,
-no crash, correct final settle), armed-delete-confirm interrupting a
-glide (no crash, correctly snaps on resume), simultaneous glide+theme-
-transition (both progress independently, no interference), backward
-system clock (all three mechanisms handle it via existing max(0.0,...)
-clamps).
-
-4 NEW scenarios checked this round (test_animation_edge_cases_2.py),
-all pass: (1) a status duration shorter than the fade-in+fade-out
-windows combined -- no crash, alpha stays in range, single rise-then-
-fall shape (see below for the one caveat found); (2) degenerate
-row_h=0 for eased_sel_y -- no crash, correctly degrades to always-snap
-rather than dividing by zero; (3) repeated identical-target calls at
-an already-converged steady state, even with large time gaps between
-calls, never spuriously re-marks the glide active; (4) the new
-duration=0 defensive guard itself.
-
-ONE THEORETICAL (CURRENTLY UNREACHABLE) FINDING, documented rather
-than silently accepted: set_status() durations under ~0.37s (fade-in
-0.12s + fade-out 0.25s) would fade in more slowly than the toast's
-total lifetime, so it'd disappear before ever reaching full brightness
-instead of a clean fade-out. Every ACTUAL set_status() call site in
-the app uses 2.5s or 10.0s, far above this threshold, so this can't
-currently occur -- flagged for the record rather than glossed over,
-not fixed since there's no live code path that hits it.
-
-ANIMATION CPU AUDIT + TWO REAL BUGS FOUND (v26.07.16.09, Kaleb's
-request to double-check CPU use): asked to verify CPU cost, actual
-investigation surfaced two real correctness bugs in the v26.07.16.08
-selection glide, neither of which the isolated pixel-readback tests
-had caught (those call draw_library() etc. directly, bypassing the
-main loop's need_redraw gating entirely):
-
-BUG 1: non-reader screens only redraw when app.dirty is set (a button
-press) -- eased_sel_y() had no way to keep the main loop redrawing
-while a glide was still converging, so a selection glide would move
-ONE frame on the triggering press and then freeze partway there
-forever (nothing else would mark the app dirty again). Fixed:
-App._sel_anim_active, set True by eased_sel_y() whenever a call is
-still meaningfully mid-glide, read (then reset) by a new check in
-main()'s redraw-forcing block (same pattern as the theme-transition/
-status-toast ones).
-
-BUG 2 (found while fixing bug 1): eased_sel_y() uses exponential-decay
-easing (each call moves a FRACTION of the remaining distance), which
-mathematically never reaches the target exactly through normal
-repeated short-dt calls -- frac only hits 1.0 in the degenerate case
-of one very long dt. Without an explicit "close enough" check, bug 1's
-fix would have made _sel_anim_active stay True FOREVER after any
-selection change, forcing full-screen redraws every frame indefinitely
--- a real, easily-missed battery/CPU cost, not a cosmetic issue. Fixed:
-App.SEL_ANIM_SNAP_EPSILON_PX (0.5px) -- once within epsilon, snaps
-exactly to target and does NOT mark active, so forced redraws
-correctly stop.
-
-Both proven via test_glide_redraw_forcing.py, which replicates the
-main loop's actual redraw-decision sequence (not just calling
-draw_library() directly): a glide now converges over ~24 forced frames
-with zero further button presses, then genuinely stops forcing
-redraws (_sel_anim_active verified False afterward, not just assumed).
-
-CPU numbers (test_animation_cpu_cost.py, dev-hardware timing scaled by
-the project's established 4.1x ARM H700 factor): eased_sel_y() ~5us/
-call, status_alpha() ~1us/call, _tick_theme_transition() ~53us/call --
-all under 0.35% of a single 16.7ms frame budget; none involve pixel
-loops, I/O, or large allocations. The cost that actually matters is
-the EXTRA forced redraws, not the per-call math: a full draw_library()
-frame measures ~3.8ms device-scaled, so a glide's ~24-frame convergence
-burst is ~91ms of one-time CPU work spread across ~400ms of real time
--- triggered only by an actual selection change, during which the
-screen was already going to be actively redrawing at ~60fps anyway.
-Theme transitions force redraws for a fixed 180ms, only on a rare
-user-initiated theme change. The status toast fade adds ZERO new
-forced-redraw time -- toasts already forced continuous redraws for
-their full on-screen duration before the fade existed; the fade only
-adds a cheap alpha calculation on top of frames already being drawn.
-None of the three force any redraw while the person is just reading
-with nothing active -- the idle low-power sleep(0.05) branch is
-completely unaffected in that (most common) state.
-
-SELECTION GLIDE EXTENDED TO EVERY LIST SCREEN (v26.07.16.08, Kaleb's
-request): v26.07.16.07's Library-only glide was refactored into a
-single shared mechanism -- App.eased_sel_y(key, target_y, row_h),
-keyed by a per-screen string, replacing the old dedicated
-_lib_sel_anim_y/_lib_sel_anim_t attribute pair with one
-self._sel_anim dict serving every list screen. Same behavior as
-before (time-based convergence, snaps instantly on jumps >3 row
-heights) -- just one mechanism instead of one attribute pair per
-screen. Wired into all 15 selection-highlight draw sites: Library,
-Menu, Chapters, Library Menu, Download Categories/Sources/Video
-Sources/Audio Sources/Audio Books/Video Series/Browse, Theme Menu,
-Theme Select, Bookmarks, Storage. Re-verified via the real pixel-
-readback test (updated for the new dict-based API) that Library's
-glide still genuinely animates across multiple frames after the
-refactor, plus the full existing regression suite (sound, intro theme,
-status fade, theme transition) all still pass unaffected.
-
-SUBTLE ANIMATIONS (v26.07.16.07, Kaleb's request): three small polish
-animations, deliberately NOT touching page turns/menu open-close/nav
-(those stay instant -- "quick, simple, relaxing, easy" means the app
-getting out of your way, not decorating every interaction). A fourth
-idea (a short fade on the splash screen's exit) was proposed and
-explicitly declined by Kaleb given the splash fade-to-destination bug
-history (see draw_splash()'s docstring) -- not implemented.
-
-1. Status toast fade: set_status() now tracks status_started;
-app.status_alpha() computes a 120ms fade-in / 250ms fade-out instead
-of an abrupt pop-in/pop-out, applied via render_text()'s existing
-alpha param (same mechanism the splash subtitle already uses safely --
-NOT the mechanism that broke on the splash's full-screen fade). One
-call site (the forced single-frame toast drawn right before a blocking
-operation) deliberately keeps alpha=255 instead of fading, since a
-120ms fade-in would make it invisible for the one frame that matters.
-
-2. Library selection glide: new App._eased_toward() helper (time-based,
-not frame-counted, so it converges in the same wall-clock time
-regardless of redraw rate) -- the selection highlight now slides to
-its new row instead of jumping. Snaps instantly instead of gliding if
-the jump is large (>3 row heights, e.g. wrapping bottom-to-top of a
-long list) -- a slow sweep across the whole list would read as lag,
-not polish. Only wired into Library for now; the same _eased_toward()
-helper can extend to other list screens (Menu/Chapters/Bookmarks/
-Storage) later if wanted.
-
-3. Theme color transition ("like a color slider"/"colors moving across
-the wheel" -- Kaleb's own description): apply_theme() no longer sets
-COL_* globals directly. It records the CURRENT values as
-_THEME_TRANS_FROM and the target palette as _THEME_TRANS_TO, and
-_tick_theme_transition() (called once per frame, in main()'s render
-loop, BEFORE any screen's draw_*() runs that frame) linearly
-interpolates every channel over 180ms. Every draw_*() call already
-reads COL_BG/COL_ACCENT/etc. as live globals each frame, so animating
-the globals themselves means EVERY screen's colors crossfade with zero
-changes to individual draw call sites -- the only touch points are
-apply_theme() itself and the one per-frame tick call. First-ever
-application (app boot, COL_BG still None) snaps instantly -- nothing
-to animate from. need_redraw is forced True while a transition is
-active, same pattern as an active status toast. Deliberately NOT the
-same architecture as the reverted splash fade (see draw_splash()'s
-docstring) -- no alpha/blend modes, no second screen drawn underneath;
-just the same plain RGB values every draw call already uses, animated
-in place.
-
-INTRO THEME SWOOSH REMOVED (v26.07.16.06, Kaleb's request): the
-trailing 2s soft swoosh that followed the typing sequence is gone --
-_snd_soft_swoosh_stereo() deleted entirely (was otherwise unused).
-SND_SOUNDS["intro"] is now JUST the 1.5s typing sequence (132300
-bytes, was 308700 with the swoosh). Everything else about the intro
-(stereo panning per letter, exact SPLASH_TYPE_SECONDS timing, mute
-gating, skip-clears-queue behavior) is unchanged -- see v26.07.16.04's
-notes below for those details, minus the swoosh parts.
-
-SOUND VOLUME/TIMING AUDIT (v26.07.16.05, Kaleb's request): confirm and
-back were peaking at 0.25 (fraction of full scale ~0.18) vs nav/error/
-page's 0.11-0.16 -- softened confirm/back's volume param from 0.25 to
-0.18 for consistency (all 5 now peak 0.11-0.18, well under a 0.35 "too
-loud" threshold). Also verified -- not just re-asserted -- that lag
-can't delay/garble a sound: the sound-dispatch line is literally the
-first thing handle_button() does, before ANY per-screen logic (page
-loads, wraps, etc.) runs, and SDL_QueueAudio() hands off a sound's
-WHOLE buffer at once (not a live streaming callback), so a slow main
-thread afterward can't affect a sound that's already fully queued.
-Proved this by monkey-patching a real per-screen code path
-(_ensure_page_built) to sleep 50ms and confirming the SDL queue was
-already non-empty the instant that slow path started running. Also
-confirmed 20 rapid repeat presses never stack/pile up sounds -- the
-queue stays at exactly one sound's worth of bytes throughout, since
-each press clears the previous queue before queueing its own.
-
-BOOT-SPLASH INTRO THEME + STEREO AUDIO (v26.07.16.04, Kaleb's request):
-audio device switched from mono to stereo (SoundEngine's SDL_AudioSpec,
-channels=2) to support left-to-right panning. All 5 existing UI sounds
-(nav/confirm/back/error/page) are pre-converted to centered stereo via
-_snd_mono_to_stereo() at import time so they still play correctly on
-the stereo device instead of garbling -- a stereo device interprets
-raw bytes as interleaved L/R pairs, so mono data fed to it plays back
-at double speed/wrong pitch if not converted first.
-"intro" sound (SND_SOUNDS["intro"], built once by _build_intro_theme()):
-"PICO READER" typed out in short nav-bloop blips, EACH ONE PANNED to
-match its letter's left-to-right position in the title, timed to
-exactly match SPLASH_TYPE_SECONDS=1.5s (11 characters -> 1500/11
-slots) -- not an approximate gap/duration pairing, the timing is
-computed directly from the same constant draw_splash() uses. (A
-trailing swoosh section that used to follow this was removed in
-v26.07.16.06, see above.)
-Plays via self.play_sound("intro") ONCE at the exact point
-self.screen = SCREEN_SPLASH is set in App.__init__ -- NOT from
-draw_splash() (which runs every frame; calling from there would
-re-trigger it constantly). Goes through the same app.play_sound() gate
-as every other sound, so it's silent end-to-end when sound_enabled is
-False -- verified this actually leaves the real SDL queue empty
-(SDL_GetQueuedAudioSize == 0), not just that the Python call was
-skipped. If the person skips the splash early (START/A/B),
-handle_button()'s normal SND_BTN_MAP dispatch calls
-SDL_ClearQueuedAudio() before queueing that button's own sound, so the
-intro is cut cleanly rather than continuing to play over whatever
-screen comes next -- verified via the real SDL queue size shrinking
-after a skip press, not just checking which Python function ran.
-
-SOUND DEFAULT CHANGED TO OFF, THEN BACK TO ON (v26.07.16.03, then
-reverted in v26.07.17.06, Kaleb's request: "way more expected" for it
-to be on). Fresh installs with no settings.json now get
-sound_enabled=True again, same as the original v26.07.16.01 default.
-Existing saved settings.json values are unaffected either way -- this
-only changes what a brand-new install with no settings.json gets.
-
-EXIT-APP SOUND (v26.07.16.02, Kaleb's request): the "error" sound
-(quiet double "wonk" -- generated but previously unmapped to any
-button, see v26.07.16.01's notes) now plays via app.play_sound("error")
-at both places quit_requested gets set to True: SCREEN_LIBRARY's
-B-to-quit, and the reader popup Menu's "Exit App" choice.
-
-SOUND EFFECTS (v26.07.16.01, Kaleb's request): pure-synth SDL2 audio, no
-asset files, no SDL2_mixer, no pip deps -- 5 short 16-bit PCM tones/
-sweeps/noise-blends generated once in Python at import time (~20KB
-fixed, held in RAM for the process lifetime -- not unbounded, never
-grows). Went through several real-listening rounds (not guessed) to
-land on a calm/nighttime-reading palette:
-  nav (UP/DOWN + L/R scroll)  - soft rising bubble bloop, quiet 2nd
-                                 harmonic for warmth
-  confirm (A/X/Y/START)      - rising sine sweep
-  back (B)                   - falling sine sweep
-  error                      - two quiet low "wonk" thuds (not yet
-                                 wired to any button -- see below)
-  page (L2/R2 page/chapter)  - slow sine arc + ~18% heavily-filtered
-                                 noise blend for "paper air" -- an
-                                 earlier pure-noise version read as
-                                 either piercing or dull/bored; giving
-                                 it the same tonal-sine backbone as the
-                                 other 4 sounds fixed both problems.
-SND_BTN_MAP (near SoundEngine class) is a single flat button->sound
-table, checked once at the very top of handle_button() -- deliberately
-NOT instrumented into individual screen branches, so opening/closing
-the reader popup Menu (X/Y opens it, B closes it) gets confirm/back for
-free without special-casing that screen. "error" is generated and
-available via app.play_sound("error") but has no button mapped to it
-yet; wire it to specific invalid/blocked actions if Kaleb wants that
-next.
-Settings: app.sound_enabled (default True), toggle available in BOTH
-the reader popup Menu ("Sound Effects" row, mirrors Immersive Mode's
-pattern) and Settings/Storage ("Toggle Sound Effects", mirrors Disk
-Cache/Images/Open Last Book). SoundEngine opens one SDL audio device in
-App.__init__ and silently no-ops (app.play_sound() becomes a no-op) if
-that fails for any reason -- never raises, never blocks the UI.
-
-NOTE: everything up through v26.07.14.19 this session was actually built
-and delivered on July 15, 2026 -- the .07.14 date prefix was wrong the
-entire time, carried forward from stale context instead of checked
-against the real date, exactly the "date-continues-from-prior-session
-mistake" this project's own VERSION NUMBERING section warns about below.
-Caught and corrected here; no functional change, only this header and
-the version-numbering going forward.
-
-Non-obvious behavior is explained via inline "# vYY.MM.DD.XX" comments
-directly above the relevant code as you read through the file -- this
-top section is a snapshot of current architecture and known trouble
-spots, not a running log of every past change. If you need the history
-behind a specific decision, search this file for its inline comment
-first; past conversation transcripts are the source of truth beyond that.
-
-Recurring lessons worth knowing up front:
-- Text layout (style_at(), _compute_line_style_runs(), epub_engine.py's
-  remap()) uses bisect + precomputed cumulative arrays, not linear
-  scans -- a real book (Enjoy Life Forever's largest page, 4.5M chars)
-  timed out past 30s under the naive O(n x m) approach before this.
-  draw_reader()'s per-line paragraph-kind lookup (app._para_spans) got
-  the same treatment in v26.07.13.09 -- see that lookup's own comment.
-- Cold book-open and chapter-load cost is dominated by real, necessary
-  work for large/Bible-style books (thousands of spine files) -- see
-  EpubDocument.probe_chapter_anchor_count() and _build_anchor_index()
-  for how that's kept to only the ~2 real books that actually need it.
-- Large-page handling uses three independent thresholds (character-based
-  loading-screen and disk-cache-eligibility bars, plus a byte-based
-  warm-cache-load bar) -- see LARGE_PAGE_LOADING_THRESHOLD/
-  PRERENDER_THRESHOLD/WARM_CACHE_LOADING_THRESHOLD's own comments.
-- FAT32/exFAT on muOS user-data partitions has real per-syscall
-  overhead on flash storage -- minimize syscall COUNT (chunked reads,
-  attempt-then-catch instead of stat-before-read), not just CPU time.
-- Scroll ceiling math must use VISUAL ROW cost (_rows_for_li()/
-  _image_box_rows()), never raw line count -- _max_scroll() (added
-  v26.07.13.01) is the single source of truth every scroll-clamping
-  call site uses now. Any image-containing page can cost far more
-  rows than its line count implies; a `len(self._lines) - body_rows`
-  ceiling silently disagrees with that the moment it does.
-- v26.07.13.10: extreme pages (over LARGE_PAGE_LOADING_THRESHOLD) no
-  longer wrap in one blocking call. _wrap_chunked_start()/
-  _wrap_chunked_step() do the SAME algorithm as _wrap() (kept intact,
-  byte-identical, still used as-is for ordinary pages) but paused/
-  resumed across frames via self._live_wrap_state/_live_wrap_key,
-  writing directly into self._lines/etc as they grow so the page is
-  readable and scrollable while still building -- _max_scroll() already
-  worked purely off len(self._lines) so this needed no separate
-  "partial" code path. self._page_cache_key is only ever set once a
-  page is FULLY built (see the `_page_is_complete` guard in
-  _ensure_page_built()) -- this is what makes navigating away mid-build
-  cleanly abandon it (never partially cached, either RAM or disk) and
-  what makes _ensure_page_built() keep re-entering to take another
-  slice each frame instead of getting stuck after the first one. Only
-  known limitation: checkpoints happen BETWEEN paragraphs, not within
-  one -- a rare very-large single paragraph (confirmed up to ~1.3s on
-  real device, scaled from dev-hardware profiling) can't be interrupted
-  mid-paragraph.
-- SECURITY (v26.07.15.16): audited for malicious-content risk (a bad
-  EPUB or spoofed download response trying to harm the device). No
-  eval/exec/subprocess anywhere in the codebase, so there's no code-
-  execution path from file content. Two real hardening gaps found and
-  fixed: (1) epub_engine.py's _parse_xml() now rejects any DOCTYPE with
-  an <!ENTITY> declaration before parsing -- closes an XML entity-
-  expansion ("billion laughs") DoS risk that stock ElementTree doesn't
-  guard against on its own; real EPUBs never define custom entities in
-  container.xml/opf/ncx/nav, so no real book is affected. (2) all three
-  download() functions (gutenberg_fetch.py, jw_fetch.py x2) now run the
-  server-provided filename through os.path.basename() before joining
-  with dest_dir, closing a path-traversal write risk if a download
-  response were ever spoofed/MITM'd. zipfile usage was already safe (reads via
-  zip.open() into memory, never extracts to disk, so zip-slip doesn't
-  apply); pickle usage was already safe (only ever deserializes the
-  app's own previously-serialized wrap cache, never network/EPUB data).
-- SECURITY, round 2 (v26.07.15.17): two more real gaps closed. (1)
-  epub_engine.py's EpubDocument._read() now checks
-  zipfile.getinfo(path).file_size (free -- read from the central
-  directory, no decompression needed) against
-  MAX_SINGLE_FILE_DECOMPRESSED_BYTES (64MB) BEFORE decompressing --
-  closes a zip decompression-bomb risk where a tiny compressed EPUB
-  entry could expand to hundreds of MB/GB and exhaust the device's 1GB
-  RAM. 64MB leaves generous headroom over the largest known real page
-  (~4.5M chars, well under 10MB). get_page() raises
-  ValueError same as its existing parse-failure path, and every call
-  site already wraps get_page() in a broad except (KeyError/ValueError
-  or Exception) -- checked all 9 call sites in main.py, none needed
-  changes. (2) all 4 download functions (gutenberg_fetch.py,
-  jw_fetch.py x3) now reject any resolved download URL that doesn't
-  start with "https://" before handing it to urlopen() -- closes a
-  local-file-disclosure risk (e.g. a spoofed API response returning
-  file:///etc/passwd) since every real CDN URL from gutenberg.org/
-  jw-cdn.org is already https-only, so no legitimate download is
-  affected.
-- MEMORY LEAK FOUND AND FIXED (v26.07.15.18): full headless stress test
-  (real App(), real SDL2/SDL_ttf under SDL_VIDEODRIVER=dummy, real
-  controller-button dispatch via handle_button()) caught a genuine
-  unbounded-growth bug independent of anything else this session:
-  render_text_cached()'s _text_texture_cache held one permanent SDL
-  texture per unique (font, text, color) line ever drawn, and was ONLY
-  ever cleared in full on page/font-size change -- never bounded WHILE
-  staying on one page. Confirmed via profiling: scrolling linearly
-  through the largest real page (the "Track Your Bible Reading" page,
-  ~99,700 unique lines) grew RSS by ~71MB per 1000 scrolled lines with
-  zero ceiling (page-text cache and wrapped-page cache stayed flat the
-  whole time -- this was the one genuinely unbounded cache). Extrapolated
-  to the full page, that's multiple GB -- would crash the real device
-  well before reaching the end of that one page. Fixed by making
-  _text_texture_cache a bounded LRU (OrderedDict + move_to_end() +
-  MAX_TEXT_TEXTURE_CACHE=200 + _evict_text_texture_cache_if_needed()),
-  mirroring _evict_image_textures_if_needed()'s existing pattern exactly.
-  Re-profiled after the fix: RSS flat at ~141MB from 1,000 through 20,000
-  scrolled lines on the same page (was 1.6GB+ before). Re-ran the full
-  regression sweep (1,077 page-loads, 5 real books x 3 Font Sizes) and
-  the controller-driven nav test (open/page/chapter-skip/font-resize/
-  menu/200-mashed-input cycles) after the fix -- identical zero-error
-  results to before, plus a pixel-readback check confirming text still
-  actually renders (not just avoids crashing).
-
-- THEME RANDOMIZER (v26.07.15.19, extended v26.07.15.20): "Randomize
-  Theme" menu item (Library Menu and Reader Menu, next to Theme +/-)
-  generates a random hue-based dark palette via generate_random_theme()
-  and applies it immediately. Contrast-safe by construction, not luck:
-  both critical pairs (text-vs-bg, hint_text-vs-hint_bg) are nudged via
-  WCAG relative-luminance math (_contrast_ratio()/_relative_luminance())
-  until each clears the same 4.5:1 AA floor the 5 hand-tuned THEMES
-  entries target -- verified against 200 random seeds, 0 failures.
-  Up to MAX_CUSTOM_THEMES=3 saved custom themes are kept (v26.07.15.20:
-  raised from the original cap of 1 -- Kaleb's request); once full, the
-  OLDEST is evicted (FIFO) on the next save. Applying a random palette
-  is instant/free and lives in the session-only _DRAFT_THEME global
-  until named+saved via the existing SCREEN_TEXT_ENTRY keyboard
-  (App.randomize_theme()'s _on_confirm calls save_custom_theme(), which
-  appends to CUSTOM_THEMES and persists the whole list to
-  data/custom_theme.json). Canceling the name prompt (B) leaves the
-  draft applied for the current session only -- touches neither
-  settings.json nor the json file, so it quietly doesn't survive a
-  restart, no separate "discard" path needed. Architecture: THEMES (the
-  5 fixed palettes) is unchanged; CUSTOM_THEMES is a capped list;
-  all_themes() = THEMES + CUSTOM_THEMES + [_DRAFT_THEME if pending] is
-  the one place Theme +/-, apply_theme(), and the randomizer all read
-  through -- no other call site needed to learn about custom/draft
-  themes. Considered and rejected: true button-hold/long-press
-  detection for this (would need new SDL_JOYBUTTONUP/KEYUP handling --
-  this app's input loop is currently button-DOWN-only, no held-duration
-  tracking anywhere) -- Kaleb chose a plain menu item instead, so that
-  input-model change was NOT made.
-  BACKUP/RESTORE (v26.07.15.20): two new Storage screen actions, same
-  pattern as the existing bookmarks backup/restore --
-  "Backup Custom Themes Now" (instant, non-destructive, snapshots the
-  whole CUSTOM_THEMES list to backups/custom_themes_backup_*.json, only
-  the most recent 10 kept) and "Restore Custom Themes Backup" (two-press
-  confirm like Restore Latest Backup/Clear Image Cache -- REPLACES the
-  live list wholesale with the latest backup's contents, unlike
-  bookmarks' per-entry timestamp merge, since a saved theme is a single
-  named snapshot rather than something that accumulates independently).
-  Restoring re-applies THEME_INDEX afterward (apply_theme()'s existing
-  clamp handles a currently-applied custom theme whose index no longer
-  resolves the same way post-restore).
-  THERAPEUTIC HUES (v26.07.15.21): generate_random_theme()'s hue
-  selection reworked at Kaleb's request to reflect his other project,
-  Cava Solace (cava-manager.sh's audio visualizer therapeutic
-  randomizer), instead of a fully random hue wheel. THERAPEUTIC_FAMILIES
-  (Sage/Sky/Lavender/Amber/Cream/Blush hue ranges) and
-  THERAPEUTIC_COMBOS (the 2-family pairings) are the same anchors/
-  pairings cava-manager.sh uses, minus its 3-family combos -- this
-  app's palette only has two hue ROLES (bg/panel/text/dim/hint vs
-  link/link_sel/accent), so a third hue has nowhere to go. Saturation
-  narrowed to 22-48% (was 35-60%) to match cava's muted-over-vivid
-  calibration; link/link_sel lightness now drawn from the same 48-68%
-  corridor cava-manager.sh's gradient stops use. generate_random_theme()
-  now returns "name" as the actual family pairing (e.g. "Sage + Sky")
-  instead of a placeholder "Custom" string -- shown live in the status
-  bar and used as the pre-filled default when the text-entry naming
-  screen opens (still fully editable/overridable, same as before).
-  warning is deliberately left a fixed muted red regardless of family --
-  an alert color, not part of the calming intent.
-  BG/FOOTER TINT (v26.07.15.22): bg/panel/hint_bg/menu_sel_bg (every
-  dark "chrome" surface -- background AND the footer/hint bar) now
-  share ONE saturation value (sat_bg, capped at 0.18) instead of each
-  being an arbitrary fraction of the accent saturation -- this is
-  cava-manager.sh's own window-tint rule verbatim ("sat <= 18%,
-  lightness <= 10% always reads calm regardless of hue"), so bg and
-  the footer read as one coordinated subtle tint instead of two
-  independently-faded intensities.
-  REAL BUG FOUND AND FIXED (v26.07.15.23): "Restore Custom Themes
-  Backup" could silently switch the active theme to the WRONG one if a
-  randomized-but-not-yet-saved draft (_DRAFT_THEME) was the currently
-  displayed theme when the restore ran. Root cause: the draft always
-  sits at the LAST index of all_themes(), but "last" is a moving target
-  as CUSTOM_THEMES' length changes -- the handler was re-applying the
-  pre-restore THEME_INDEX as a bare number, which could land on a real
-  restored custom theme instead of the draft if the restored list's
-  length differed from what it was when the draft was generated
-  (repro: save some custom themes, back up, save MORE (or fewer) custom
-  themes, randomize again without saving, then restore an OLDER backup
-  from Storage -- confirmed via a real handle_button()-driven repro,
-  not just a hand-rolled state check). Fixed by capturing
-  was_showing_draft BEFORE the restore call (comparing THEME_INDEX
-  against len(all_themes())-1) and, if true, re-resolving to
-  len(all_themes())-1 AFTER the restore instead of the stale absolute
-  index. Also audited during this same pass:
-  render_text_cached()'s cache key includes the actual color RGB
-  values (not a theme index), so no stale-color-rendering risk exists
-  there even without explicit invalidation; every real apply_theme()
-  call site in Theme +/-, randomize/save, and restore already resets
-  app._page_cache_key; and exactly ONE place in the whole file
-  constructs a Color() from raw theme dict values (apply_theme()
-  itself) -- every other draw call reads the live COL_* globals, so
-  popups/splash/text-entry all move together automatically with no
-  special-casing needed (confirmed via real SDL_RenderReadPixels
-  pixel-readback against the Library Menu popup, the naming
-  text-entry screen, and the splash screen, plus a boot-time check that
-  the very first rendered frame after loading a saved custom theme
-  already shows it with no flash of Default).
-  REGENERATE THEME + THEMES SUBMENU (v26.07.15.24, Kaleb's requests):
-  two related additions. (1) "Regenerate Theme"/"Save Regenerated
-  Theme" -- modeled directly on Cava Solace's separate Generate/Apply
-  buttons: cycle to a saved custom theme, then Regenerate re-rolls a
-  fresh random candidate and applies it live, repeatable as many times
-  as wanted (first press locks in WHICH saved theme is being replaced
-  by NAME, not list position -- see _DRAFT_REPLACE_NAME's module-level
-  comment for why position would be unsafe here, same class of bug as
-  the v26.07.15.23 fix above; re-confirmed with a dedicated repro where
-  the regenerate target vanishes from CUSTOM_THEMES entirely mid-flow
-  via an unrelated backup restore -- falls back to appending instead of
-  clobbering an unrelated theme). Save Regenerated Theme commits it,
-  replacing that theme in place (list stays the same length) rather
-  than appending. Both are safe no-ops with a status message when used
-  out of context (not cycled to a custom theme yet, or nothing pending)
-  -- same lightweight pattern as Pre-render's "Open a book first",
-  not a hidden/disabled row. (2) Kaleb's follow-up: "don't overclutter
-  the popup menu" -- every theme action (Theme +/-, Randomize,
-  Regenerate, Save Regenerated) moved out of the flat Library/Reader
-  Menu into a new "Themes..." submenu (SCREEN_THEME_MENU,
-  THEME_MENU_ITEMS), collapsing what would have been 5 separate rows
-  in each parent menu down to 1. Kaleb's OWN second follow-up caught an
-  important design point before it shipped wrong: this had to stay an
-  OVERLAY (draw_theme_menu() paints the real Reader/Library backdrop
-  first, exactly like draw_menu()/draw_library_menu() already do), NOT
-  a full-screen takeover like draw_storage() -- a full-screen menu
-  would hide the very thing Regenerate/Randomize need to preview
-  against (real reading content behind the panel).
-  REAL BUG FOUND AND FIXED (v26.07.15.25): draw_theme_menu() and
-  draw_bookmarks() had been accidentally MERGED into one function by
-  an earlier str_replace edit this same session that deleted the
-  "def draw_bookmarks(renderer, app):" line between them -- the two
-  bodies silently concatenated into one function under the
-  draw_theme_menu name (still valid Python, so it compiled fine and
-  gave no error). Caught because Kaleb asked to see a screenshot of
-  the new Themes submenu and immediately noticed the rendered image
-  was actually the Bookmarks screen, not the theme panel -- the merged
-  function drew the theme overlay first, then unconditionally painted
-  a full-screen Bookmarks view directly on top of it, hiding the
-  overlay entirely. This also meant SCREEN_BOOKMARKS itself was
-  silently broken (draw_bookmarks no longer existed as a name -- would
-  have crashed the instant Bookmarks was opened for real, a path this
-  session's test suites never happened to exercise). Fixed by
-  restoring the missing "def draw_bookmarks(renderer, app):" line,
-  splitting the two functions back apart. Lesson for future sessions: when a
-  str_replace's old_str spans a function boundary (a blank-line-then-
-  "def other_function(...)" pattern), the replacement's new_str MUST
-  preserve that boundary line explicitly -- it's easy to drop while
-  focused on the content before/after it, and the bug is invisible to
-  py_compile since the merged result is still syntactically valid.
-  REAL BUG FOUND AND FIXED (v26.07.15.26, Kaleb's real-device photo):
-  title/subtitle overlap in draw_download_browse() -- the SHARED
-  results-list renderer used by every JW category (Videos, Audio,
-  Bibles, Books & Brochures, Watchtower, Awake!, Meeting Workbooks) AND
-  Gutenberg, since none of them have their own separate rendering path.
-  Root cause: the title line used _row_text_y() -- a helper explicitly
-  built to vertically center a SINGLE line of text within row_h (see
-  its own v26.07.12.15 docstring) -- but this is a TWO-line row (title
-  + subtitle). Centering the title as if it were the row's only
-  content pushed it down by roughly half the subtitle's own height,
-  while the subtitle was positioned independently via a raw
-  "y + title_h + _sy(10)" offset that assumed the title started at the
-  row's unshifted top. The two assumptions didn't match, so the
-  (now-lower) title collided with the subtitle on EVERY row, at EVERY
-  Font Size (both scale together, so this was never a small-size-only
-  glitch -- confirmed present at all 7 SIZE_STEPS before the fix).
-  Fixed by computing the real two-line BLOCK height (title_h + a
-  genuine inter-line gap + sub_h) and centering THAT block within the
-  row's slack -- title and subtitle now both derive their y from the
-  same block_top, so they can't desync again regardless of row_h's own
-  future tuning.
-  THEME NAME SHOWN 3x, FIXED (v26.07.15.27, Kaleb's report): the
-  Themes submenu's "Theme +" and "Theme -" rows each appended
-  "(current_name)" to their own label, so the active theme's name
-  showed up on BOTH rows simultaneously -- twice just sitting in the
-  menu -- on top of a THIRD showing in the toast set_status() already
-  gives after pressing either one. Removed the per-row suffix
-  entirely; the toast alone is now the feedback for what Theme +/-
-  just switched to. The current theme's name is still visible at a
-  glance while browsing (not removed outright) -- moved to a single
-  "Current: X" subtitle line under the THEMES heading instead, shown
-  once regardless of how many rows exist. Regenerate Theme's own
-  dynamic label ("re-rolling \"X\"") and Save Regenerated Theme's
-  ("nothing pending") were left untouched -- those show information
-  the toast doesn't (the LOCKED regenerate target, and whether
-  anything is pending to save), so they aren't the same redundancy.
-  DELETE THEME (v26.07.15.28, Kaleb's request): new "Delete Theme" row
-  in the Themes submenu, two-press confirm (same pattern as Delete
-  Book/Clear All Finished -- arms on first A, executes on second;
-  disarmed by UP/DOWN navigation, B, or pressing A on any OTHER row,
-  identical to _menu_delete_armed's existing reset rules). Only
-  operates on a real SAVED custom theme -- cycle to it first via
-  Theme +/-; pressing it while on a fixed THEMES entry, an unsaved
-  randomize/regenerate draft, or with no custom themes saved at all is
-  a safe no-op with a status message, not a hidden/disabled row (same
-  lightweight pattern as the rest of this menu). App.delete_theme()
-  looks the target up by NAME at the moment of actual deletion (not a
-  stale list-position captured back at the first/arming press) --
-  same defensive reasoning as regenerate_theme()'s _DRAFT_REPLACE_NAME
-  approach, though the practical exposure here is smaller: the arm
-  already gets cleared by the same navigation that would be needed to
-  reach anything that could change CUSTOM_THEMES (Randomize Theme's
-  own save flow, or Storage's backup/restore, which isn't even
-  reachable from inside this submenu without leaving it via Back
-  first). Falls back to the Default theme (index 0) after deleting,
-  rather than guessing a "next" theme.
-  DEFAULT THEME PROTECTION HARDENED (v26.07.15.29, Kaleb's request:
-  "make sure no default themes can be deleted by accident just in
-  case"): delete_theme() already couldn't touch THEMES (the 5 fixed
-  themes) -- it only ever operates on CUSTOM_THEMES, a structurally
-  separate list -- but added an explicit, self-evident second-layer
-  guard anyway ("if THEME_INDEX < len(THEMES): no-op", checked
-  independently of handle_button()'s own identical check before
-  arming), plus a load-bearing assert(len(THEMES) == 5) right before
-  the actual deletion, so the invariant is enforced in code, not just
-  documented in a comment. Confirmed via a whole-file grep that THEMES
-  is never mutated ANYWHERE (defined once as a plain list literal,
-  read-only for the rest of the program) -- every actual
-  append/delete/reassignment in the codebase targets CUSTOM_THEMES
-  specifically.
-  MINOR HARDENING (v26.07.15.30): both "Themes..." entry points
-  (Library Menu and Reader Menu) now also reset _theme_delete_armed to
-  False the moment the submenu opens, not just on every exit path.
-  Every exit (B, selecting any other row) already cleared it, so this
-  wasn't a reachable bug -- added purely as defense-in-depth so the
-  guarantee doesn't rely on "every exit path happens to clear it"
-  remaining true forever as the menu evolves.
-  5 USABILITY ADDITIONS (v26.07.15.31, Kaleb's request after a review
-  pass): (1) "Select Theme..." -- new SCREEN_THEME_SELECT overlay
-  listing every theme (5 fixed + up to 3 custom) by name; UP/DOWN
-  applies the highlighted one LIVE as you move (same live-preview
-  mechanism Randomize/Regenerate already use), A confirms/persists, B
-  reverts to whatever was active before opening -- direct jump instead
-  of stepping through Theme +/- one at a time. (2) "Rename Theme" --
-  changes a saved custom theme's name WITHOUT re-rolling its colors
-  (the only other naming path, Save Regenerated Theme, always changes
-  the palette too); same name-at-commit-time lookup safety as
-  regenerate/delete_theme(), same no-op-with-status-message gating
-  when not cycled to a real saved theme. (3) "Saved: X/3" -- new
-  subtitle line under "Current: X" showing how many of the 3 custom
-  slots are used, so hitting the FIFO eviction cap isn't a surprise.
-  (4) "Backup/Restore: see Settings" -- new subtitle line pointing at
-  where backup/restore actually live (the Storage screen, reachable
-  via Settings from the PARENT menu, not from inside this submenu at
-  all) -- previously undiscoverable unless you already knew to look.
-  (5) "Reset to Default" -- one-press jump back to the Default theme
-  from anywhere, instead of cycling however many presses away it is.
-
-FFPLAY INVOCATION (v26.07.20.13, Kaleb's request -- optimization +
-cleanup pass over native_video.py's play_jw_video()). Current state:
-base args live in one named constant, _FFPLAY_BASE_ARGS ("-fs
--framedrop -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1
--reconnect_delay_max 2") -- reconnect flags give HTTP(S) streaming
-resilience against wifi hiccups (harmlessly ignored for local
-downloaded-file playback), -framedrop keeps audio/video in sync if a
-weak ARM core falls behind on software decode. Fill-screen mode's
-scale+crop filter uses ":flags=fast_bilinear" to cut per-frame CPU cost
-(default bicubic is ffmpeg's most expensive scaling algorithm; no
-material visible difference at this screen size). "-loglevel error"
-with stderr captured to /tmp/picoreader_ffplay.log (separate from
-main.py's own CRASH_LOG so a long video session doesn't bloat it) --
-previously a real ffplay crash left zero diagnostic trail. Deliberately
-NOT using -hwaccel/v4l2m2m -- whether this SoC + muOS's bundled ffmpeg
-build expose a working hardware decoder is unverified, and ffplay has a
-history of not supporting -hwaccel reliably even where ffmpeg does;
-needs a real on-device `ffmpeg -decoders | grep v4l2` check before ever
-pursuing that. Logic-reviewed only throughout; no real-hardware
-confirmation yet -- next on-device video test should confirm nothing
-regressed (audio still syncs, fill-screen crop still fills correctly)
-and that the log file actually gets written.
-
-FFPLAY BUG CHECK PASS (v26.07.20.14, Kaleb's request, 2 changes): (1)
-added "-rw_timeout 15000000" (15s) to _FFPLAY_BASE_ARGS -- a hung
-connection (accepted but never sends data) previously had no bound at
-all and would sit indefinitely, since -reconnect only fires on an
-actual completed failure, not a stall. (2) BUG FIX: play_jw_video()
-previously always returned (True, None) regardless of ffplay's real
-exit code, so a genuine playback failure (bad URL, dead connection,
-corrupt stream) was silently reported to callers as a normal successful
-session. Now checks result.returncode and returns (False, short reason)
-on failure, with the full detail always in FFPLAY_LOG regardless. Logic-
-reviewed only; no real-hardware confirmation yet.
-
-CONDITIONAL PRE-VIDEO MEMORY TRIM (v26.07.20.15, Kaleb's question:
-"always, or only if needed?" -- answer: only if needed). New
-native_video.maybe_trim_memory(clear_caches_fn): checks real
-/proc/meminfo MemAvailable and ONLY clears caches + gc.collect() +
-glibc malloc_trim(0) if below a 150MB threshold. Deliberately not
-unconditional -- the trim itself isn't free (can pause tens-to-hundreds
-of ms), so paying that cost before every video including short clips
-with no real memory pressure would add a small consistent delay for no
-benefit. Wired into both video call sites (browse-screen and in-book
-link), right after each one's existing blank-frame double-clear, passing
-App._clear_text_texture_cache as the cache-clear callback (this module
-has no knowledge of the reader's SDL state, so the caller supplies it).
-Considered and rejected: closing/reopening the whole book to free
-memory -- would add visible reload jank (re-running the cold-wrap ramp)
-for no real benefit over trimming caches in place, since position is
-already persisted regardless. Logic-reviewed only; no real-hardware
-confirmation yet that MemAvailable readings or the malloc_trim() actually
-help meaningfully on this device -- worth checking real RSS before/after
-on the next on-device video test, especially on a memory-heavy page.
-
-MEM-TRIM VISIBILITY (v26.07.20.16, Kaleb's question -- "how would I
-know if this is doing anything"). maybe_trim_memory() now logs EVERY
-call to FFPLAY_LOG, not just when it actually trims: skipped calls log
-the MemAvailable reading and why it skipped; trims additionally log
-this process's own RSS before/after plus MemAvailable after. Answerable
-straight from the log file after a normal on-device session -- no SSH
-or live monitoring needed. Logic-reviewed only; no real-hardware log
-output seen yet.
-
-MEM-TRIM THRESHOLD LOWERED (v26.07.20.17, Kaleb's request): 150MB ->
-80MB. 150MB was an unmeasured "definitely safe" guess; 80MB is a middle
-ground closer to ffplay's own genuinely small software-decode footprint
-while still leaving real headroom for other allocations during ffplay's
-own startup window. Not derived from real device numbers yet -- the
-per-call logging (v26.07.20.16) is what should ultimately settle the
-right number once real MemAvailable data exists.
-
-LOG FILE SIZE CAPS (v26.07.20.18, Kaleb's request): both CRASH_LOG
-(main.py) and FFPLAY_LOG (native_video.py) previously appended forever
-with no rotation -- unbounded growth risk on limited device storage,
-more relevant now that FFPLAY_LOG fires on every video play (not just
-failures) since v26.07.20.16's mem-trim logging. Both now check file
-size before each write and delete-and-restart if over 1MB
-(LOG_CAP_BYTES / _FFPLAY_LOG_CAP_BYTES). Simple truncate-on-cap, not
-real rotation -- no .1/.2 history kept, not judged worth the complexity
-for diagnostic logs like these.
-
-RIGHT STICK SUPPORT (v26.07.20.20, Kaleb's request, mapping swapped
-once from the initial v26.07.20.19 build): current state -- right
-analog stick Y axis mirrors L/R (page turn, up=next/R, down=previous/L),
-X axis mirrors L2/R2 (chapter nav, right=next/R2, left=previous/L2,
-matching the existing L2=previous/R2=next convention). Purely additive
--- D-pad/shoulder buttons work exactly as before, this is just an
-alternate input path to the same actions. Edge-triggered like the
-D-pad's own hat events: fires once when an axis crosses AXIS_DEADZONE
-(8000 of SDL's +-32767 range) in a direction, then requires it to
-return through center before firing again -- no repeat-while-held, no
-new per-frame timing loop, stays purely event-driven (same shape the
-app's whole input model already uses). JOY_AXIS_RX/RY resolved from
-muOS's own sdl_map file via _load_sdl_axis_map() (mirrors
-_load_sdl_map()'s existing button-parsing exactly, just for the "a<N>"
-axis entries instead of "b<N>" buttons), defaulting to a2/a3 --
-confirmed correct for CubeXX-H/RG34XX-SP via controller_ref.txt. Safe
-no-op by construction on any device without a physical right stick (the
-axis index still resolves, its value just never moves) -- no device-
-detection branch needed anywhere. Logic-reviewed only; no real-hardware
-confirmation yet that axis events actually arrive/feel right in practice.
-
-MUOS DEVICE REFERENCE TABLE (v26.07.20.24, Kaleb's request -- fully
-rebuilt from GROUND TRUTH, not inference). SOURCE: the actual
-github.com/MustardOS/internal repo, downloaded directly via
-codeload.github.com/MustardOS/internal/zip/refs/heads/main (2026-07-21)
--- every sdl_map and every internal-screen width/height below is the
-REAL file content, not a guess from muos.dev's descriptive text or a
-URL-anchor-inferred codename. This fully supersedes the earlier version
-of this table (v26.07.20.21-.23), which had several devices marked
-"not confirmed either way" or relied on inferred codenames -- all of
-that is now settled. GitHub device-folder codenames (confirmed real,
-not inferred): github.com/MustardOS/internal/device/<codename>/.
-
-Columns: device | resolution (internal panel, config/screen/internal/
-width+height) | sticks (from the real sdl_map: "2" = leftstick +
-rightstick buttons + rightx/righty axes all present; "0" = only
-leftx/lefty present, no stick buttons/right axis at all -- same
-"resolves but never moves" situation already designed for in
-JOY_AXIS_RX/RY) | codename.
-
-Anbernic:
-  RG28XX H     | 640x480 | 0 sticks | rg28xx-h
-  RG34XX H     | 720x480 | 0 sticks | rg34xx-h   (matches Kaleb's own
-                                                    pasted sdl_map exactly)
-  RG34XX SP    | 720x480 | 2 sticks | rg34xx-sp  (matches Kaleb's own
-                                                    pasted sdl_map exactly)
-  RG35XX 2024  | 640x480 | 0 sticks | rg35xx-2024
-  RG35XX H     | 640x480 | 2 sticks | rg35xx-h   (CORRECTED -- previously
-                                                    "not confirmed"; real
-                                                    map has leftstick:b12,
-                                                    rightstick:b15,
-                                                    rightx/righty:a2/a3)
-  RG35XX PLUS  | 640x480 | 0 sticks | rg35xx-plus
-  RG35XX PRO   | 640x480 | 2 sticks | rg35xx-pro
-  RG35XX SP    | 640x480 | 0 sticks | rg35xx-sp
-  RG40XX H     | 640x480 | 2 sticks | rg40xx-h
-  RG40XX V     | 640x480 | 2 sticks (per raw sdl_map -- but see
-                            RG40XX V DISCREPANCY note below)     | rg40xx-v
-  RGCubeXX H   | 720x720 | 2 sticks | rgcubexx-h (this app's primary
-                                                    target, real hardware)
-TrimUI:
-  Brick        | 1024x768 | 0 sticks | tui-brick  (CORRECTED --
-                                                     previously "not
-                                                     confirmed")
-  Brick Pro    | 1024x768 | 2 sticks | tui-brick-pro (NOT on muos.dev's
-                                                        current public
-                                                        device list --
-                                                        exists in the
-                                                        repo, unclear if
-                                                        released/public
-                                                        yet)
-  Smart Pro    | 1280x720 | rightx/righty PRESENT (a2/a3) but NO
-                            leftstick/rightstick buttons at all --
-                            matches muos.dev's own "no analogue stick
-                            click, no L3, no R3" exactly.       | tui-spoon
-
-RG40XX V DISCREPANCY: the raw sdl_map defines the full 2-stick button/
-axis set identically to RG40XX H, but muos.dev's own device description
-text says "Exchange right stick for left stick on the RG40XX-V device"
-and elsewhere implies a single physical stick. Likely explanation: the
-RG40XX family shares one map template regardless of which physical
-sticks a given variant actually has -- same "slot exists, may not be
-physically wired" pattern as the leftx/lefty-only devices above.
-Flagging rather than resolving confidently -- if right-stick support
-ever matters specifically on THIS device, verify on real hardware
-before trusting the raw map alone.
-
-OTHER DEVICES FOUND IN THE REPO (not on muos.dev's current public
-"Supported Devices" list -- included for completeness, low relevance to
-PicoReader unless Kaleb ends up with one of these):
-  GCS H36S     | 640x480  | codename gcs-h36s   | different GUID/map
-                                                    shape entirely (
-                                                    triggers on analog
-                                                    axes a2/a5, not
-                                                    digital buttons)
-  MGX Zero28   | 640x480  | codename mgx-zero28 | identical map to
-                                                    GCS H36S -- likely
-                                                    same board/rebrand
-  RG Vita Pro  | 1920x1080| codename rg-vita-pro| different GUID, full
-                                                    2-stick layout
-  RK G350V     | 640x480  | codename rk-g350-v  | Rockchip-based,
-                                                    inverted axis
-                                                    notation (a0~ etc.)
-                                                    in its own sdl_map
-  RK Pixel 2   | 640x480  | codename rk-pixel-2 | sdl_map file EXISTS
-                                                    but is EMPTY --
-                                                    device likely not
-                                                    fully wired up in
-                                                    the repo yet
-
-PicoReader's right-stick code (JOY_AXIS_RX/RY, main.py) remains safe by
-construction on every 0-stick device above: axis indices still resolve
-via _load_sdl_axis_map(), they simply never receive motion.
-
-ANDROMEDA (2606.0) WATCH-LIST (v26.07.20.25, Kaleb's request). Pulled
-the REAL in-development changelog from muos.dev/release/progress/2606_0
-(still unreleased as of this note -- "check back soon for download
-links", no ETA). Full list is ~400 items, almost all internal-frontend-
-only; these 4 are the ones actually relevant to PicoReader/device-
-support work, to re-check once Andromeda actually ships (not before --
-nothing here is actionable yet):
-  1. RG Vita Pro ("Added Vita Pro to supported board list", plus
-     dedicated PPSSPP/RetroArch/audio/screenshot fixes) -- becoming
-     OFFICIALLY supported. This is the device found in the
-     MustardOS/internal repo as "not on muos.dev's current public
-     list" (1920x1080, full 2-stick sdl_map) -- it's real and about to
-     go live, not abandoned config.
-  2. TrimUI Smart Pro's SDL mapping is ACTIVELY CHANGING ("Added
-     TrimUI Smart Pro specific SDL mapping", "Updated SDL IDs for
-     TrimUI Smart Pro", "Removed old TrimUI Smart Pro SDL controller
-     ID"). The tui-spoon sdl_map in the table above is CURRENT-RELEASE
-     data -- re-pull it after Andromeda actually ships before trusting
-     it for that device.
-  3. General SDL/controller remap overhaul continues ("Added input
-     remap system for all controllers", "Added device specific SDL
-     mapping", "Fixed goofy SDL mapping by swapping GUID remap
-     layouts", "Ensure we only modify DPAD swap on stickless devices"
-     -- that last one independently corroborates this whole session's
-     "stickless devices" framing). Reinforces the existing priority
-     check already noted elsewhere in this file for SDL joystick raw
-     button mapping on release.
-  4. RG40XX V's single-stick nature is explicitly being touched
-     ("Fixed single stick input testing", "Fixed single stick RGB
-     setting") -- corroborates treating it as genuinely single-stick
-     (site-text side) rather than the raw sdl_map's literal 2-stick
-     definition (see RG40XX V DISCREPANCY note above).
-Everything else in the real changelog (theme system rewrite, per-core
-RetroArch/emulator button fixes for RG34XX H/TrimUI Brick, etc.) is
-muOS's own internal frontend or emulator-core config -- not something
-an external app like PicoReader reads, so not tracked here.
-
-LEFTOVER VIDEO FRAME AFTER VIDEO -- FIXED, CONFIRMED ON REAL HARDWARE
-(v26.07.20.32). Root cause: in-book-link video playback ran on a
-background thread (the only place in this app doing real SDL work off
-the main thread); the browse-screen video path never did this and
-never showed the bug. Ruled out first, in order, each with real
-evidence before moving to the next: a code-flow/hang bug (ffplay.log
-confirmed normal returns), an SDL clip-rect/scissor bug (none exist in
-this codebase), a simple WM-focus/stacking issue (raise/show + a
-CTupe-matched pause didn't help), a KMSDRM-master-handoff state bug
-(renderer recreation didn't fix it and caused a new regression, fully
-reverted), and images as a factor (text-only mode didn't stop it
-either). FIX: the in-book-link background thread now does ONLY the
-network resolve step (the part that actually benefits from
-backgrounding -- keeps the "Resolving video..." toast responsive);
-once resolved it hands {"url", "title"} off via App._pending_link_video
-and returns. The main loop's own top-of-loop check now does the actual
-play_jw_video() call + cleanup synchronously on the MAIN thread,
-matching play_video_item() exactly. The old _video_streaming_active
-flag is gone -- there is no code path left anywhere in this app that
-does SDL work from a non-main thread.
-
-STANDING PRINCIPLE (elevated from this bug + the existing cold-wrap
-design -- see _start_warm_load()'s own comment for the earlier,
-independent discovery of the same rule): SDL_ttf/FreeType text
-rendering and SDL_Renderer/window/texture calls are NOT thread-safe in
-this app and must only ever happen on the main thread. This is WHY
-_wrap_chunked_start()/_step() runs as small time-budgeted slices on the
-main thread instead of a background thread (a background thread here
-would hit the exact same class of bug this video fix just solved, just
-for text instead of video) -- and it's the design rule any FUTURE
-feature needing to do real work during a slow operation should follow:
-background thread for non-SDL work only (network calls, disk I/O, pure
-CPU decode/pickle -- see ImageLoader's worker and _start_warm_load()'s
-own disk-read thread for two already-correct examples), then hand the
-RESULT back to the main thread to actually act on via SDL. Never call
-SDL_ttf, SDL_Renderer, SDL_Texture, or SDL_Window functions from
-anywhere except the main thread, regardless of how tempting it is to
-just "do the SDL work in the background thread too" for something that
-seems simple.
-
-POST-REDESIGN BUG FOUND AND FIXED (v26.07.20.34, Kaleb's request to
-check for bugs after the v26.07.20.32 threading redesign -- found via
-code review, not a live report). The redesign introduced a real race
-condition not present in the old design: _link_video_downloading flips
-back to False on the resolve thread BEFORE _pending_link_video gets
-set (two separate lines, narrow but real gap). In that window, without
-a guard, following another video link could start a second resolve
-that finishes before the main loop consumes the first pending video --
-silently overwriting App._pending_link_video and dropping the first
-video's playback with no error shown. Most likely to actually trigger
-if the main loop is mid a slow redraw/cold-wrap chunk that frame,
-widening the window. Fixed by also requiring
-self._pending_link_video is None before allowing a new resolve to
-start (follow_selected()'s own guard condition) -- nothing can begin
-resolving a new video while a previous one is still waiting to be
-played. Logic-reviewed only; this specific race is narrow enough that
-it may never have been hit in Kaleb's own testing so far, but is a
-real correctness gap worth having closed regardless. Reviewed the rest
-of the redesign at the same time and found no other issues: the
-download path (download_selected_link_video(), SELECT-bound) is a
-fully separate flow untouched by this change; the pending-video check
-sits as the very first thing after "while running:", before any
-dirty/idle-throttle logic, so it's never delayed by frame-skipping.
-
-SWITCHED TO MPV (v26.07.20.35, Kaleb's request). Primary reason: ffplay
-structurally has no on-screen progress bar/OSD (confirmed via
-ffmpeg-devel's own mailing list history of a never-mainlined patch
-proposal) -- a real gap for JW videos up to ~1hr long. mpv has a real
-one (--osd-bar). Kaleb also confirmed mpv is already his real working
-default for downloaded videos on his own device, de-risking the CPU
-concern raised earlier in this same investigation (a benchmark from an
-unrelated system showed mpv at ~4-5x ffplay's CPU in one case -- real
-on-device use overrides a benchmark from a different setup).
-native_video.play_jw_video() now tries mpv FIRST, falling back to
-ffplay automatically if mpv isn't found on a given device/build (same
-tolerant discovery pattern as everywhere else in this file, e.g.
-native_image.py's fallback to mini_jpeg.py). A bundled mpv input.conf
-(/tmp/picoreader_mpv_input.conf, written fresh each launch) matches
-ffplay's existing seek amounts exactly (space/p=pause, q=quit,
-left/right=+-10s, up/down=+-1min) so switching players is invisible to
-whoever's holding the controller. Fill Screen: mpv's own "--panscan=1.0"
-replaces ffplay's manual scale+crop -vf chain -- same visual result,
-simpler flag. ALSO ADDED (Kaleb's original ask, before pivoting to the
-player switch): L1/R1 now map to Page Up/Down for a real +-10 MINUTE
-skip -- via the bundled input.conf this is unconditional/exact on mpv
-(genuinely better than ffplay's own native PGUP/PGDOWN, which only
-falls back to a plain 10-minute jump when a file has no chapters; ours
-always does). Also required registering KEY_PAGEUP/KEY_PAGEDOWN with
-the virtual keyboard device (VirtualKeyboard.create()'s UI_SET_KEYBIT
-loop) -- easy to miss, since without that the keys would inject with
-no visible error but simply never reach the player at all. Both
-call sites (play_video_item(), and the new main-thread pending-video
-handler) updated to pass joy_l1=JOY_L/joy_r1=JOY_R. Logic-reviewed
-only; no real-hardware confirmation yet that the mpv path actually
-launches correctly, that the OSD bar renders as expected, or that the
-bundled input.conf gets picked up -- worth checking all three
-specifically on the next on-device video test, along with whether the
-mpv fallback-to-ffplay path is even reachable/needed on this device
-(Kaleb's already using mpv successfully outside PicoReader, so it's
-almost certainly present).
-
-MPV RE-REVIEW BUG FIXES (v26.07.20.36, Kaleb's request to double-check
-the mpv code specifically). Found via careful manual review (tool
-outage meant no fresh file access at first -- findings were confirmed
-against the actual code once tools recovered, then fixed and verified
-with real dry-run tests): (1) reconnect flags were INCOMPLETE -- only
-passed "reconnect_streamed=1,reconnect_delay_max=2" via
---stream-lavf-o, missing the base "reconnect=1" and
-"reconnect_at_eof=1" that the ffplay path already correctly includes.
-reconnect_streamed is an ADDITIONAL flag on top of the base reconnect
-option in ffmpeg/libavformat (mpv's own network layer) -- without
-reconnect=1 also set, plain HTTP reconnect likely never triggered at
-all, meaning this whole network-resilience feature was silently
-incomplete since it first shipped. Now matches the ffplay path's
-already-proven four-flag set exactly. (2) --input-conf was passed
-unconditionally regardless of whether _write_mpv_input_conf() actually
-succeeded -- fixed to only include that flag on a successful write;
-otherwise mpv falls back to its own built-in default bindings rather
-than risk being pointed at a nonexistent file. (3) mpv's fill_screen
-branch was incorrectly gated on "screen_w and screen_h" truthiness,
-inherited from ffplay's branch where those are genuinely required
-(manual scale+crop needs explicit numbers) -- mpv's --panscan=1.0
-needs no dimensions at all, so fill_screen could have silently failed
-to apply on mpv in any edge case where those happened to be None/0.
-Decoupled -- now gated on fill_screen alone for the mpv branch. All
-three verified with real dry-run tests targeting the exact previously-
-broken conditions (fill_screen=True with screen_w/h=None; asserting all
-four reconnect flags present; simulating a failed input.conf write) --
-all three pass now.
-
-MPV CONFIG -- CHECKED AGAINST MUOS'S OWN REAL SCRIPT (v26.07.20.37,
-Kaleb's request). Downloaded the actual MustardOS/internal repo again
-(already had it from earlier session work) and found muOS's own real,
-shipped mpv launcher: script/launch/ext-mpv.sh. Its actual invocation:
-"--no-config --fullscreen --keepaspect=yes --video-zoom=0
---video-align-x=0 --video-align-y=0" -- notably NO --vo override at
-all. This settles a question raised earlier in this same conversation
-(whether to force --vo=drm over mpv's default shader-based --vo=gpu,
-since mpv's own docs admit that path isn't optimized for weak/embedded
-GPUs): muOS's own team, who tested this across their real supported
-device list, didn't override --vo either -- no real evidence supported
-forcing it, so that idea is dropped. Also confirmed muOS's own script
-has ZERO reconnect/framedrop/osd-bar/msg-level flags -- everything
-this app has added on top (network resilience, framedrop, the OSD bar
-itself, quieter logging) is genuine additive value, not in conflict
-with anything proven. Adopted two things directly from muOS's own
-script: --no-config (defensive -- prevents a stray user mpv config
-file on the device from silently interfering with these settings, same
-reasoning muOS's own team already applied) and explicit fit-mode flags
-(--keepaspect=yes --video-zoom=0 --video-align-x=0 --video-align-y=0)
-for the non-fill-screen branch, matching muOS's own proven invocation
-exactly rather than relying on mpv's bare defaults to happen to produce
-the same letterboxed result. Both verified with real dry-run tests
-(fit mode and fill mode each build the correct, expected arg list).
-
-VIDEO PLAYER SETTING ADDED (v26.07.20.38, Kaleb's request). New
-3-way setting: "Auto" (default -- today's existing mpv-preferred/
-ffplay-fallback behavior, unchanged), "mpv", or "ffplay" for an
-explicit manual override. Reachable both from the reader popup menu's
-Video Settings submenu and the standalone Settings/Storage screen,
-same as Fill Screen/Streaming Quality already are -- added to
-VIDEO_SETTINGS_ITEMS and STORAGE_ACTIONS, with matching label
-rendering, hide-when-native_video-unavailable guards, and A-button
-cycle handling (Auto -> mpv -> ffplay -> Auto) at all the same
-locations those two settings already exist at. native_video.
-play_jw_video() gained a player_pref param -- even with an explicit
-choice, it STILL falls back to the other player if the preferred one
-genuinely isn't found on device (an explicit preference means "prefer
-this one", not "only this one, fail hard otherwise" -- same tolerant
-philosophy as "auto" and every other player-discovery path in this
-file). While wiring this in, cleaned up a leftover redundant fallback
-line from the original mpv-switch commit that was still functionally
-correct but confusing to read (the auto/mpv branch's own
-find_ffplay()-if-missing fallback now lives inside that branch
-directly, instead of as a stray top-level line after the if/else).
-
-GHOST-GAP BUG CHECK -- FOUND AND FIXED TWO REAL INSTANCES (v26.07.20.39,
-Kaleb's request to verify no visual bug like the historical
-v26.07.17.16 Storage-screen gap could recur when native_video.py/
-jw_fetch.py are omitted). Confirmed the historical bug's OWN fix
-(draw_storage()'s row_pos counter) is still intact and correctly
-covers the new Video Player setting -- no regression there. But found
-TWO OTHER menus with the exact same unfixed bug, never caught before:
-(1) the main reader popup menu (draw_menu(), hides "Video Settings"
-when native_video is None) was using `i` (raw loop position) for Y
-instead of a row_pos-style counter -- hiding "Video Settings" left a
-blank row-height gap and shifted every row below it down. (2) the
-Library Menu (hides "Download Books" when DOWNLOAD_PLUGINS is empty --
-i.e. both jw_fetch.py AND gutenberg_fetch.py omitted) had the identical
-bug using `(i - start)` instead of a counter. Both fixed with the same
-row_pos pattern already proven in draw_storage() -- a separate counter
-that only advances for rows actually drawn, used for Y position
-instead of the raw loop index. Selection-highlight comparisons in both
-screens already correctly used the real underlying index throughout
-and were untouched by either fix -- this was purely a Y-position bug,
-never a navigation or selection-landing bug, same as the original
-v26.07.17.16 case. Both fixes verified with standalone Python
-simulations of each row loop (before/after), matching the same
-verification standard the original historical fix used -- confirmed
-no gap in either screen now, whether native_video.py, jw_fetch.py, or
-both are omitted from a build.
-
-VERSIONING SCHEME CHANGE (v26.07.09.01): switched from the old
-sequential v0.1.X counter (last value: v0.1.162) to a date-based scheme:
-YY.MM.DD.XX, where YY.MM.DD is today's date and XX is a same-day counter
-starting at 01 and incrementing per change, resetting to 01 each new
-calendar day. No more major/minor/patch semantics -- the date IS the
-version. All prior "v0.1.X" references throughout this file are historical
-and untouched; only new changes going forward use the new format.
-
-Current screen/feature set: Themes submenu (5 fixed color themes +
-Randomize/Regenerate Theme, up to 3 saved custom slots, backup/restore),
-7 Font Size steps, JW.org +
-Project Gutenberg download plugins, Image Maximize Mode (fullscreen
-zoom/pan on a selected image), Library with sort/pin/finished/filter,
-bookmarks with history, Chapters (TOC) navigation, per-book Storage/
-cache controls, and JW video browsing. The video/search picker is
-driven entirely by jw_fetch.py's own VIDEO_SOURCES registry (label +
-loader function + args per entry) -- see open_plugin_video_list()/
-VIDEO_SOURCE_BY_LABEL. As of v26.07.15.15 this is 1 flat entry
-(Governing Body Updates, plus Search) alongside 11 nested folder
-entries (JW Broadcasting, Our Meetings and Ministry, Music, Programs
-and Events, Series, Children, Teenagers, Family, Our Activities, The
-Bible, Interviews and Experiences -- see SCREEN_DOWNLOAD_VIDEO_SERIES
-below). The folder entries mirror jw.org's OWN real parent/child
-category structure, confirmed live rather than invented -- e.g. "JW
-Broadcasting" used to be a flat entry
-that actually loaded "Monthly Programs" content under its parent's
-name; v26.07.15.11 fixed the mislabel and nested it properly alongside
-its real sibling "Talks". Leaving the JW plugin clears its cached
-OmniSearch bearer token. Search (Y) and Manual Code (SELECT, JW only)
-are reachable directly from the Categories screen, not just after
-opening a category.
-
-Two-level VIDEO_SOURCES navigation (v26.07.15.09): a VIDEO_SOURCES
-entry can carry a "subcategories" list (currently just "Series") --
-choosing it opens SCREEN_DOWNLOAD_VIDEO_SERIES (a second picker,
-app.video_series_index/app._pending_video_source, mirrors the existing
-Bible-book sub-picker for Audio) instead of calling a loader directly;
-picking one of ITS entries merges that entry's own "key"/"label" into
-the parent's "loader"/"args" and calls it exactly as normal. This is
-fully generic on the main.py side -- no JW-specific strings/category
-keys appear here at all, only in jw_fetch.py's own VIDEO_SOURCES list
-(see draw_download_video_series()'s own docstring for the contrast
-with the Bible-book picker, which DOES read a JW-specific attribute
-directly). Any future plugin gets nested sub-picking for free just by
-adding a "subcategories" list to one of its own VIDEO_SOURCES entries.
-
-Multi-resolution letterboxing lets the app run on any muOS screen size
-while keeping its fixed 720x720 layout untouched -- see
-SDL_RenderSetLogicalSize()/window-creation in main().
-
-Bundled font is DejaVu Sans Condensed (all 4 weights) -- chosen after
-checking a dozen open-source candidates for real glyph coverage
-(JW-specific bullets/arrows/checkmarks, Hebrew block for Bible acrostic
-headers) via direct cmap checks, not assumption; DejaVu was the only
-one with native coverage of everything needed, Condensed for
-letterforms closer to Liberation Sans's original proportions. The
-active font's real cmap is checked via TTF_GlyphIsProvided32 at
-startup and only missing glyphs get substituted (epub_engine.py's
-set_active_glyph_subs()) -- for DejaVu that table is empty. Liberation
-Sans remains as an on-device system-path fallback (not bundled) if the
-bundled files are ever missing. DejaVu's TTF_FontHeight runs taller
-than Liberation/Inter's did at the same pt -- UI chrome (hint bar,
-toast pill, list-row padding) was retuned for this; reader body text
-uses a flat point-size-based line height (independent of any one
-font's real metrics) so it wasn't affected the same way.
-
-UI: 5 fixed color themes (Default, Dim Warm, Deep Amber, Red Shift,
-Adventure) in THEMES, plus up to MAX_CUSTOM_THEMES=3 randomly-generated
-custom themes in the CUSTOM_THEMES list (see THEME RANDOMIZER changelog
-entry, v26.07.15.19/.20) -- all_themes() = THEMES + CUSTOM_THEMES +
-[_DRAFT_THEME if pending] is the one list Theme +/-, apply_theme(index),
-and "Randomize Theme" all cycle/index through. apply_theme() rebinds
-module-level COL_* globals that every draw_* function already reads by
-name, so adding a theme (fixed or custom) needs no per-screen code
-changes. Dim Warm/Deep Amber/Red Shift are bedtime palettes
-(progressively less blue, more amber/red). Current theme index saved as
-settings.json "theme_index"; CUSTOM_THEMES itself lives in its own
-small data/custom_theme.json (oldest evicted once a 4th save would
-exceed the cap), backup-able via the Storage screen's "Backup Custom
-Themes Now"/"Restore Custom Themes Backup" (backups/custom_themes_backup_*.json,
-same pattern as the existing bookmarks backup).
-Global Font Size setting scales ALL UI text (reading + hint bar + menus
-+ Library/Chapters/Storage) via dynamic row heights/wrapping
-(_row_h(), _fit_text()) -- nothing overflows at any of the 7 font-size
-steps. If something clips/overlaps at large Font Size, it's almost
-certainly a spot still using a fixed pixel constant instead of one of
-these two helpers.
-Selector highlights, popup windows, and the hint bar's top corners are
-rounded (fill_rect_rounded(), CORNER_RADIUS = 6px scaled, 3px for the
-text-entry keyboard cells specifically -- tighter clearance there).
-No SDL2_gfx linked; this is a cheap quarter-circle mask approximation.
-Text color is fully theme-driven system-wide -- no hardcoded colors.
-
-JW.org plugin (jw_fetch.py, PRIVATE, never publish): category picker
-(Bibles/Books & Brochures/Tracts/Watchtower/Awake!/Meeting Workbooks),
-search scoped per-category, manual pub-code entry. All pub codes
-individually verified live against GETPUBMEDIALINKS before being
-hardcoded -- never guessed. Watchtower and Meeting Workbook have full
-generated back-issue lists (safe: both are non-monthly-but-regular).
-Awake! has a hard-coded back-issue list instead (2016-2025, 28 issues)
-since its publish frequency changed twice (6/yr 2016-17, 3/yr 2018-21,
-1/yr 2022+) -- see jw_fetch.py's own docstring for the verification
-method and how to extend it when a new issue ships.
-Gutenberg plugin (gutenberg_fetch.py, public): handles both plain <img>
-covers and SVG-wrapped covers (<svg><image xlink:href>); download
-screens show a spinner + elapsed seconds instead of static "Loading...";
-any spine page that renders fully blank (no text, no images) logs to
-data/render_issues.log and shows a visible on-screen note.
-
-Architecture, three files:
-  main.py         SDL2/ctypes UI, App class (all mutable reader state),
-                   ImageLoader (background decode, priority queue),
-                   ReaderState (current file/anchor/history)
-  epub_engine.py  EpubDocument: manifest/spine/TOC (NCX+nav) parsing,
-                   get_page() (HTML->wrapped text+links+images+anchors),
-                   pure stdlib only
-  mini_jpeg.py    from-scratch JPEG decoder (no PIL/Pillow available),
-                   full progressive JPEG (SOF2) support since v0.2.0.
-                   Fallback path only as of v0.1.80 -- see native_image.py.
-                   Remains JPEG-only (native_image.py handles every other
-                   format -- see its own docstring)
-  native_image.py v0.1.80+ (renamed from native_jpeg.py in v0.1.146 once
-                   v0.1.145 generalized it beyond JPEG): ctypes bridge to
-                   the system libSDL2_image (confirmed present on RG
-                   CubeXX-H muOS at /usr/lib) for real C-speed decode of
-                   JPEG/PNG/TIF/WEBP/JXL/AVIF. decode_jpeg() in main.py
-                   tries this first, falls back to mini_jpeg.py
-                   automatically if unavailable/fails (JPEG only)
-
+project back up. Rewritten as a topic-organized CURRENT-STATE summary
+(v26.07.29.12 bug sweep) -- the previous version of this section had grown
+into a multi-thousand-line chronological session log with heavy overlap
+and superseded entries, exactly what Kaleb's own standing policy says to
+avoid ("keep current-state only... never accumulate overlapping
+historical iterations"). Full session-by-session history, if ever needed,
+lives in git/the person's own chat history -- this file only needs to
+describe what IS true now, not the path that got here.
+
+-------------------------------------------------------------------------
+PROJECT STATUS
+
+Current version: v26.07.30.07. Companion app to Pico8FavsSorter (same
+conventions: raw ctypes SDL2, no external deps, hint bar, controller-first
+navigation). Primary target: Anbernic RG CubeXX-H (720x720, 1GB RAM).
+Confirmed working on real hardware: RG CubeXX-H and RG34XX-SP (720x480).
+Other listed resolutions (640x480 RG28XX/RG35XX/RG40XX family, 1024x768
+TrimUI Brick, 1280x720 TrimUI Smart Pro) are simulation-verified only via
+SDL_RenderSetLogicalSize's nearest-aspect canvas-height table -- not yet
+confirmed on real hardware for any of them.
+
+-------------------------------------------------------------------------
+CURRENT FEATURE SET
+
+READER: scrolling text with inline image placeholders, link navigation,
+bookmarks, resume-reading, full TOC/chapter browser, adjustable Font Size
+(7 steps, 15-32pt, SIZE_STEPS = [15,16,18,21,23,27,32], default index 2 =
+18pt), 5 selectable themes (Default, Dim Warm, Deep Amber, Red Shift,
+Adventure) plus a random-theme generator, Immersive Mode (body text reclaims
+the full screen height, hint bar hidden on the bare reader screen only --
+see the Menu-overlay caveat in the BUG FIXES section below), progressive
+background build for extreme-length pages (multi-million-character pages
+render a growing chunk at a time instead of blocking).
+
+LIBRARY: Filter modes All/Unfinished/Finished/Pinned/Folders (cycled via
+SELECT). Folders mode is real file-manager navigation (breadcrumb, New/
+Delete/Move to Folder) -- every other filter is the flat whole-library
+list. Multi-select for batch move via R2 direct in-list toggle. Sort by
+title/author/last-read/recently-added/publication. Empty-state messages
+are filter-aware (see BUG FIXES below) rather than one generic "no books
+found" message for every case.
+
+IMAGES: native libSDL2_image bridge (native_image.py) tried first for
+JPEG/PNG/TIFF/WEBP/JXL/AVIF, falling back automatically to a pure-Python
+JPEG decoder (mini_jpeg.py, handles progressive JPEGs) if unavailable.
+
+DOWNLOADERS: gutenberg_fetch.py (public, Project Gutenberg's own OPDS
+feed) and jw_fetch.py (PRIVATE -- never publish this one; bundled in
+personal .muxapp builds, stripped for any public release build). Six
+picker screens: Categories, Sources, Video Sources, Video Series, Audio
+Sources, Audio Books. Each has a quick menu (X): Library, Exit App, Back,
+Font Size +/-, A/V Controls Help (all six), plus "Help" (search/pub-code
+help, Sources/Categories only -- different purpose than A/V Controls
+Help, see below).
+
+VIDEO/AUDIO PLAYBACK (native_video.py, PRIVATE module): plays JW.org
+video/audio via muOS's native mpv (preferred) or ffplay (automatic
+fallback), gamepad input translated to each player's real keyboard
+shortcuts via a self-contained Linux uinput virtual keyboard -- no
+gptokeyb2/PortMaster dependency. Play All/Shuffle All queue mode for
+both video and audio.
+
+CURRENT A/V CONTROL SCHEME (identical for video and audio as of
+v26.07.29.09 -- see native_video.py's own top-of-file docstring and each
+translate-loop function's docstring for the authoritative, complete,
+per-key table; this is a summary only, don't let it drift out of sync --
+if you edit the scheme, update native_video.py's docstrings, not just
+here):
+  D-pad Left/Right  -- seek +-5s
+  D-pad Up/Down     -- seek +-60s
+  L1/R1             -- seek +-10min
+  L2/R2             -- chapter-skip (single file) / prev-next track (queue)
+  X                 -- mute
+  Y                 -- (video) subtitle cycle; (audio) repeat toggle
+  START             -- toggle permanent OSD (mpv only)
+  SELECT            -- toggle stats overlay (mpv only)
+Speed control (mpv's '['/']') was REMOVED entirely (video at v26.07.29.07,
+audio at v26.07.29.09) -- Kaleb's report: unstable/laggy on the H700's
+hardware video decode pipeline (multiplicative speed changes need the
+hardware decoder to resync, a real mpv-on-constrained-hardware limitation,
+not a bug in this app's key injection). Every key above is a REAL mpv
+and/or ffplay default -- confirmed against mpv's own compiled-in
+etc/input.conf and ffmpeg.org/ffplay.html, not assumed. Notably: ffplay's
+plain PGUP/PGDOWN (used for L1/R1/L2/R2 there) already does real
+chapter-seeking with an automatic +-10min fallback for chapterless files
+-- the SAME real feature as mpv's, not a different substitute (this was
+a real documentation bug this session, fixed at v26.07.29.11/.12 -- if
+you see a comment anywhere claiming otherwise, it's stale).
+
+A/V CONTROLS HELP (v26.07.29.10): one unified static help overlay
+(SCREEN_AV_HELP, AV_CONTROLS_HELP_PARAGRAPHS, reuses the existing
+_draw_static_scroll_overlay() helper) documenting the scheme above for
+both video and audio together. Reachable via the quick menu on all six
+picker screens -- NOT during actual playback (mpv/ffplay own the whole
+screen once launched, no PicoReader UI to show it from at that point).
+
+-------------------------------------------------------------------------
+BUG FIXES FROM THE MOST RECENT SESSION (v26.07.29.13-v26.07.30.31), condensed
+
+- Passive migration replaces the manual tool (v26.07.30.31, Kaleb:
+  "don't make it migrate manually make it passive so that if it see it
+  in a flat folder and moves it to proper folder rather then
+  downloading" + "should only do this during downloads to prevent
+  duplications" -- the v26.07.30.30 "Migrate Downloads" quick-menu
+  action is removed entirely, superseded by this). New _migrate_
+  stray_if_flat() hooks into the EXACT SAME find_existing_file_
+  elsewhere() check that already runs on every single download (both
+  the individual-item path and Download All) to prevent duplicates --
+  the one moment a stray file is found is also the one safe moment to
+  migrate it, since nothing gets downloaded a second time either way.
+  Same safety classification as before (jw_fetch.classify_audio_
+  folder()/classify_video_folder()): only moves folders it can
+  confidently classify as safe (Music categories, non-per-issue
+  Publications entries, individual book/brochure/tract titles, every
+  video category); Watchtower/Meeting Workbook/either Bible edition
+  are still never touched, only found-and-reused-in-place, for the
+  same reason as before (old files from these can't be reliably
+  attributed to a specific issue/book after the fact). A file already
+  under the current PLUGIN_NAME structure (just a different valid
+  category, per the existing "series section files... reduce ping-
+  ponging" logic) is also left exactly where it is -- only genuinely
+  OLD flat-structure folders get migrated.
+  Verified live with three separate real scenarios: (1) a stray file
+  in a safe old folder gets moved to the correct new location and the
+  old now-empty folder is removed, with no duplicate download
+  happening (confirmed the final file is the STRAY's own content, not
+  freshly re-fetched); (2) the same folder with OTHER files still in
+  it is correctly left in place (cleanup never removes a non-empty
+  folder); (3) a stray file in a genuinely ambiguous old folder
+  (Watchtower Study Audio) is found (so no duplicate gets created) but
+  deliberately left exactly where it was, never moved.
+- (v26.07.30.30, superseded one version later by the passive at-
+  download-time migration above -- condensed here since it's no longer
+  how this works): first attempt was a manual "Migrate Downloads"
+  quick-menu action doing a full ROMS/Music+movies scan on demand.
+  Same safe/ambiguous classification logic, just triggered differently
+  -- Kaleb's follow-up request moved the trigger point to be passive.
+- REAL BUG (found via a deliberate follow-up sweep, not waiting for a
+  report): opening the quick menu (X) while the new audio-issues list
+  (v26.07.30.28) was still loading permanently broke that load.
+  open_audio_issue_picker()'s background-thread completion guard
+  required self.screen == SCREEN_DOWNLOAD_AUDIO_ISSUES exactly, but X
+  changes self.screen to SCREEN_DOWNLOAD_QUICK_MENU -- a temporary
+  overlay drawn on TOP of the issues screen, not actually leaving it.
+  Confirmed live: dl_loading got stuck True forever, and the real
+  fetched issue list was silently discarded the moment X was pressed
+  mid-load. Fixed by dropping the screen-equality requirement entirely
+  -- source-identity checking (added one version earlier for a
+  different race) already correctly distinguishes "still the same
+  request" from "moved to a genuinely different source" without being
+  fooled by a modal overlay sitting on top. Verified both fixes hold
+  together: quick-menu-mid-load now completes correctly (list
+  populates, loading clears), AND the earlier cross-source race
+  protection still blocks a genuinely stale source's data from landing
+  after switching to a different one. Also confirmed via direct testing
+  that open_plugin_audio_list()/open_plugin_video_list()'s existing
+  guards (dl_is_audio/dl_is_video flags, not screen equality) were
+  never vulnerable to this same bug class -- the quick menu doesn't
+  touch either flag, only this new screen's guard used the more
+  fragile pattern.
+- Full back-issue browsing for Watchtower Study/Meeting Workbook audio
+  (v26.07.30.28, Kaleb: "did we implement the full backlog of
+  watchtowers and awakes and study issues too just like epub? but the
+  audio?"). Real gap confirmed live: audio exists back to at least
+  201601, same historical depth as EPUB, but the app only ever offered
+  "This Week". New list_watchtower_audio_issues()/list_mwb_audio_
+  issues() reuse the EXACT SAME back-issue generators EPUB browsing
+  already uses (generate_monthly_back_issues("w") / generate_mwb_back_
+  issues()) rather than a second implementation to keep in sync --
+  confirmed live: 130 real Watchtower issues (Jan 2016-Oct 2026), 96
+  Meeting Workbook issues correctly modeling the 2021 monthly->
+  bimonthly frequency change. New SCREEN_DOWNLOAD_AUDIO_ISSUES picker
+  screen (async-loaded, since building the list needs a live RSS
+  check) replaces the old single "This Week" shortcut for both.
+  Confirmed UI consistency with every other picker screen in this
+  file: L/R font-size hotkey works identically, X opens the same
+  quick-menu overlay with the same item set (A/V Controls Help, Font
+  Size +/-, Library, Exit App, Back -- no "Help" item, matching every
+  other non-Sources/Categories screen), both draw functions (including
+  the async loading-state branch) render without error.
+  THREE REAL BUGS CAUGHT BEFORE SHIPPING, none from just re-reading the
+  code -- all from actually running it:
+    1. An editing mistake while inserting the new open_audio_issue_
+       picker() method accidentally deleted the "def search_video_
+       items(self, query):" line of the NEXT method, silently merging
+       the two -- caught immediately because it crashed on the very
+       first real test (UnboundLocalError), not left unnoticed.
+    2. Picking an old issue and pressing B routed to the wrong screen
+       (AUDIO_BOOKS instead of AUDIO_ISSUES) -- both a "books" source
+       and an "issues" source set app._pending_audio_source the same
+       way, and the B-handler only checked truthiness, not which kind.
+       Fixed by checking source.get("issues") first. Verified with a
+       full round-trip: issue picker -> old issue's tracks -> B -> B
+       -> B, each landing on the correct screen in sequence.
+    3. (Found during a deliberate broader sweep, not waiting for it to
+       actually misfire): open_audio_issue_picker()'s background-
+       thread completion guard only checked the SCREEN name, the same
+       pattern open_plugin_audio_list() already uses elsewhere in this
+       file -- if someone backs out of a slow-loading source and
+       quickly opens a DIFFERENT "issues" source before the first
+       request finishes, both leave the screen at SCREEN_DOWNLOAD_
+       AUDIO_ISSUES, so the stale first request could still land and
+       clobber the second one's fresh result. Fixed by also checking
+       identity against the specific source object still pending, not
+       just the screen name. Directly verified the fix: simulated
+       swapping to a different pending source mid-load and confirmed
+       the original (now-stale) request's data could no longer land.
+  Regression-checked afterward: NWT/1984 Bible books, a specific title
+  picked from Books, and a plain Music item all still resolve to the
+  correct folders and B-back targets, unaffected by any of this.
+- Bible edition naming made consistent across Bibles and Audio
+  (v26.07.30.27, Kaleb: "Bible Reading Should just be New World
+  Translation and Same (1984 edition) and reflect that into how it
+  labeled in the app too under Bibles"). "Bible Reading Audio (NWT)"
+  -> "New World Translation"; "Bible Reading Audio (1984 Edition)" ->
+  "New World Translation (1984 Edition)" (already matched Bibles'
+  own "bi12" title, no change needed there). Bibles' own "nwt" entry
+  simplified from "New World Translation (2013 Revision)" to just
+  "New World Translation" to match. Same name whether browsing Bibles
+  for the EPUB or Publications for its audio now. Verified live: both
+  labels appear identically in both places, and the resulting download
+  folder correctly reflects the new name (.../Publications/New World
+  Translation/Genesis/).
+- Books/Brochures and Booklets/Tracts added as a folder level (v26.07.30.26,
+  Kaleb: "meeting workbooks and books in general... maybe we should put
+  them into the publications short code folders?" -- clarified as: keep
+  full titles, just add the real category as a folder level above the
+  title, matching the actual Publications > Books > <title> navigation
+  depth). Individual publications (e.g. "Walk Courageously With God")
+  were landing flat directly under Publications/ regardless of which
+  category they came from. New _current_audio_pub_category_label
+  (synchronous override-after-the-call, same pattern as the other audio
+  folder trackers -- the category is already known before the fetch
+  even starts, no need to wait for a background thread the way the
+  per-issue fix did) nests it properly: .../Publications/Books/Walk
+  Courageously With God/, .../Publications/Brochures and Booklets/Love
+  People -- Make Disciples/. Confirmed Meeting Workbook Audio already
+  had correct per-issue subfoldering from the prior fix (mirrors
+  Watchtower Study Audio's own fix, both loaders were changed
+  together). Verified end-to-end for both Books and Brochures, plus
+  regression-checked Life Stories/NWT/Music show no stray category
+  label leaking in.
+- Per-issue subfoldering for Watchtower Study/Meeting Workbook audio
+  (v26.07.30.25, Kaleb: "if there are multiple watchtowers and awakes
+  do we account for that?"). Checked live across 5 real different
+  months' Watchtower issues -- no actual filename collision found,
+  titles reliably include date ranges or are otherwise distinct in
+  every real sample tested. But the folder name was fixed regardless
+  of which month's issue it was, so downloads across many months would
+  still pile into one shared, undifferentiated folder (unlike EPUB
+  periodical downloads, which already get issue-coded filenames) --
+  and a generic recurring title in some future year could still
+  theoretically collide. Closed the gap the same way the NWT per-book
+  fix did: list_watchtower_study_audio()/list_meeting_workbook_audio()
+  now tag each returned item with its resolved "_issue", and a new
+  _current_audio_issue_label gives each month its own subfolder --
+  e.g. .../Watchtower Study Audio (This Week)/202610/.
+  REAL BUG CAUGHT BEFORE SHIPPING: the first version set this tracker
+  right after the OUTER call to open_plugin_audio_list() returned --
+  but that call only STARTS a background thread and returns
+  immediately, it doesn't wait for the fetch, so dl_items was still
+  the freshly-reset empty list at that point almost every time (a
+  classic async-timing mistake, caught by tracing through the actual
+  threaded load path rather than assuming the check would work). Moved
+  to where dl_items is actually populated, inside the thread's own
+  completion code. Verified end-to-end after the fix: the real current
+  issue (202610) resolves correctly into its own subfolder, and Music
+  items / NWT book downloads (regression-checked) correctly show no
+  issue label at all.
+  Also confirmed while investigating this: downloaded audio filenames
+  are the real JW.org titles verbatim, with only filesystem-safety
+  normalization applied (em dash/curly quotes to ASCII equivalents,
+  forbidden characters stripped) -- nothing renamed or invented.
+- REAL BUG: NWT/1984 Bible audio filename collisions across books
+  (v26.07.30.24, Kaleb asked "how would nwt get foldered" -- testing
+  the actual answer surfaced this rather than just describing the
+  existing behavior). Confirmed live: every Bible book's audio was
+  landing in the SAME "Bible Reading Audio (NWT)" folder with no per-
+  book separation, and different books' same-numbered chapters use
+  the identical filename regardless of book (Genesis chapter 1 and
+  Exodus chapter 1 both produce "Chapter 1.mp3") -- downloading a
+  second book would silently overwrite the first book's matching
+  chapter numbers. Fixed with a new _current_audio_book_label tracker
+  (same override-after-the-call pattern as _audio_pub_return_category)
+  giving each selected book its own subfolder nested one level deeper
+  than the Bible edition: .../Bible Reading Audio (NWT)/Genesis/ vs
+  .../Exodus/, applies to both NWT and the 1984 Edition. Verified live:
+  Genesis and Exodus now resolve to genuinely different folders, and
+  switching to a non-Bible audio source (tested: a Music item)
+  correctly clears the book label so it can't leak. Watchtower Study
+  Audio was also checked as part of this same question and found to
+  already be fine as-is -- its 7 weekly articles have distinct titles/
+  filenames with no collision risk, no fix needed there.
+- Video downloads get the same plugin-named folder wrapper (v26.07.30.23,
+  Kaleb's follow-up: "what about videos done the same?"). ROMS/movies/
+  <PLUGIN_NAME>/<video source label>, e.g. ROMS/movies/JW.org/JW
+  Broadcasting -- same "don't mix with other apps' regular videos"
+  reasoning as audio just got, PLUGIN_NAME read the same dynamic way.
+  No extra grouping tier added for video the way audio has Music/
+  Publications -- video's own top-level categories (JW Broadcasting,
+  Dramas, Series, etc.) are all peers with nothing to nest them under,
+  so a single wrapper is the right parallel here, not a forced second
+  level that wouldn't mean anything. _resolve_media_source()'s old-
+  path fallback (added for audio last version) generalized to cover
+  video too, so previously-downloaded videos stay recognized as
+  already-local the same way. Verified end-to-end: new video path
+  correct, audio path unaffected (regression-checked), and a video
+  file placed at the old flat location is still correctly detected.
+- Audio downloads nested under a plugin-named folder (v26.07.30.22,
+  Kaleb: "so that we don't mix up what we have made vs regular music
+  from other apps" -- also confirmed the real Music/Publications UI
+  grouping this session added was NOT reflected on disk at all;
+  everything landed as flat siblings directly under ROMS/Music/,
+  regardless of which group it came from). Audio now nests two levels
+  deeper: ROMS/Music/<PLUGIN_NAME>/<Music-or-Publications>/<leaf name>
+  -- e.g. ROMS/Music/JW.org/Music/Original Songs or ROMS/Music/JW.org/
+  Publications/Draw Close to Jehovah. PLUGIN_NAME is read dynamically
+  from the plugin itself (not hardcoded "JW.org"), so a future plugin
+  with its own audio (discussed: Gutenberg, if it ever adds one) gets
+  its own top folder for free, no new code needed here -- this was
+  Kaleb's explicit reasoning for picking the plugin-name-as-folder
+  approach over a generic wrapper folder. Video intentionally left
+  unchanged -- Kaleb's request was specifically about audio/music
+  mixing with other apps' regular music, not video.
+  New app._current_audio_group_label tracks which group ("Music"/
+  "Publications") the currently open leaf source belongs to, set
+  once in SCREEN_DOWNLOAD_AUDIO_GROUP's "A" handler (applies uniformly
+  to all three of its branches), explicitly cleared for Search Audio
+  (no group). _category_dest_dir() builds the new nested path from
+  it; _resolve_media_source() falls back to checking the OLD flat
+  pre-nesting path if the new one doesn't have a file, so audio
+  downloaded before this restructuring stays recognized as already-
+  local instead of looking "missing" -- a one-time transitional
+  fallback, not a second location new downloads ever use. Verified
+  end-to-end: real navigation through Publications produces the
+  correct new nested path, and a file placed at the old flat location
+  is still correctly detected as a local copy.
+- "From Our Archives" added, three more article-index pages checked and
+  rejected (v26.07.30.21, Kaleb sent a batch of finder links covering
+  most of the remaining Article Series). "foa" confirmed live with
+  real audio via the simple shared-pub-code mechanism (no docid range
+  needed, same as Life Stories/More Topics). "ijwex" (Experiences of
+  Jehovah's Witnesses), "ijwfq" (FAQ), "ijwhf" (Help for the Family),
+  "ijwia" (Imitate Their Faith character pages) all confirmed to be
+  real article-index pages like Bible Questions Answered, but their
+  docid ranges are confirmed live to be too SPARSE to probe -- unlike
+  Bible Verses Explained's tight 55-hits-in-63-slots cluster,
+  Experiences' docid neighborhood had only 4 real hits in a 150-docid
+  window. Probing sparse ranges like that to find everything would
+  cost thousands of requests for a handful of results -- not a good
+  trade, left out on that basis. Everything else in that batch was
+  already covered or already ruled out this session (mrt/hdu/lfs
+  already added; ijwif/ijwwd confirmed JWPUB-only; ijwcl/ijwyp
+  confirmed no audio at all).
+- New docid-range audio mechanism + Bible Verses Explained added
+  (v26.07.30.20, Kaleb sent real finder links for "ijwbq"/"ijwbv" --
+  investigating them properly corrected an earlier session finding).
+  CORRECTION: earlier this session, "Bible Questions Answered" and
+  similar article-index series were checked with a bare pub=X query
+  and concluded to have no audio -- that was the WRONG test. Fetching
+  a real individual article's page (Kaleb's link) showed a genuine
+  PLAY button hitting GETPUBMEDIALINKS with docid=X&track=1, not the
+  shared pub code -- these series really do have per-article audio,
+  addressed differently than anything else in this file.
+  "Bible Questions Answered" itself is ~150-200 articles with no
+  discoverable docid range (its one confirmed docid, 502016177, sits
+  in a totally different numeric neighborhood than any pattern found)
+  -- would need to scrape every article's HTML page individually to
+  enumerate it, which is real but far more fragile/costly, left out
+  for now. "Bible Verses Explained" ("ijwbv"), by contrast, turned out
+  to have its docids clustered in ONE tight, confirmed-live range
+  (502300100-502300162) -- found by testing one known docid ("article
+  2" tag on the page matched 502300101), then scanning well past both
+  edges of that range and confirming exactly zero hits outside it
+  (exactly 55 real entries, matching the real listing page's count).
+  New list_docid_range_audio() probes a given docid range the same
+  bounded way other probing loaders in this file already do -- no HTML
+  scraping involved, every result comes from the same stable JSON API,
+  with titles read directly from its response. Added as a real
+  Publications entry, verified end-to-end (all 55 real entries load,
+  back-navigation through all 3 screen levels correct).
+  REAL BUG CAUGHT BEFORE SHIPPING: the first version of this loader
+  used the wrong item shape entirely -- copied the EPUB-style _pub/
+  _extra pattern instead of what a RESOLVED audio track actually needs
+  (_audio_url, direct from GETPUBMEDIALINKS' own file.url field, same
+  as list_audio_items() already does) -- caught by reading list_audio_
+  items()'s real return shape before testing, not after.
+- Four real audio gaps found and fixed (v26.07.30.18, Kaleb: "make
+  sure most books, brochures, bibles, tracts and workbooks get
+  audiobooks... I know they exist. There are some edge cases called
+  article series that have audio too"). All four confirmed live before
+  adding, all end-to-end tested via simulated navigation afterward:
+    - Meeting Workbook Audio (This Week) -- mwb had genuine audio (9
+      real entries for the current issue) but wasn't reachable
+      anywhere in AUDIO_SOURCES; Watchtower's existing shortcut only
+      ever covered "w", never "mwb". New list_meeting_workbook_audio()
+      mirrors it, using mwb's own probe/valid-issue chain instead of
+      w's simpler RSS-first one (mwb's RSS coverage is less reliable,
+      per that fix's own earlier docstring this session).
+    - Bible Reading Audio (1984 Edition) -- "bi12" has its own real
+      per-book audio (confirmed live, 50 real chapters for Genesis)
+      separate from NWT's own pub code; added as its own book-picker
+      entry alongside NWT.
+    - Life Stories ("lfs") -- Kaleb's "article series" edge case,
+      confirmed live: 26 real audio entries, using the exact same
+      list_audio_items() mechanism as everything else (no special
+      code needed -- pub=lfs with no extra params returns the whole
+      series' flat list in one call, same shape as Original Songs).
+    - More Topics ("mrt") -- same edge case, 102 real audio entries
+      (general Bible/science/history articles). Two other article-
+      series pub codes were checked and confirmed to have NO audio,
+      not added: "ijw" (400 Bad Request -- a generic landing-page
+      wrapper, not real content) and "ljfac" (404).
+- Audio Publications now filtered to only titles with real audio
+  (v26.07.30.17, Kaleb: "any categories that don't have audio just be
+  sure to omit them from showing"). New filter_items_with_audio()
+  (jw_fetch.py) checks each title once via GETPUBMEDIALINKS?
+  fileformat=MP3 and caches the True/False result PERMANENTLY (unlike
+  the periodical caches elsewhere in this file -- whether a
+  PUBLICATION has audio at all doesn't change day to day the way an
+  issue's existence does, so no re-check window is needed once known).
+  main.py's _load_dl_page() calls this (via a getattr-gated optional
+  hook, same graceful-degradation pattern as every other optional
+  plugin feature) whenever dl_audio_pub_mode is active. Confirmed live:
+  Books drops from 33 to 24 real entries, Brochures 14->12, Tracts
+  11->10 -- matching the "12 of 59 have no audio" figure from the
+  original systematic check two sessions ago.
+  REAL BUG CAUGHT (checked the actual cache file after a real run
+  rather than trusting the code) -- same bug class as _probe_annual_
+  issue()'s earlier fix this session: a real "no audio" answer for a
+  valid pub is a normal HTTP 404 (confirmed live, e.g. pub=od), but the
+  original broad "except Exception" caught that as if it were a
+  network failure and refused to cache it -- so every excluded title
+  was being re-checked LIVE on every single visit instead of remembered
+  (confirmed: cache file had zero False entries after a real run).
+  Fixed by catching HTTPError separately as a legitimate negative
+  result; re-verified afterward that all 33 Books entries (not just
+  the 24 that passed) end up in the cache, and a second load of the
+  same category is now genuinely instant (0.18s vs. several seconds
+  cold) instead of silently re-doing all the same live checks.
+- Audio restructured into Music/Publications groups (v26.07.30.16,
+  Kaleb: "make a category in audio called publications and another for
+  music, nest all the music there and publications nest all the audio
+  books there"). AUDIO_SOURCES top level is now just Music/
+  Publications/Search Audio; the 6 real music categories nest under
+  Music unchanged, and Watchtower Study Audio + Bible Reading Audio
+  (NWT) moved under Publications alongside three NEW entries (Books/
+  Brochures and Booklets/Tracts) that browse the SAME STATIC_
+  PUBLICATIONS catalog the EPUB Library already uses (jw_fetch.
+  list_items()) but resolve each title's real audio tracks live via
+  list_audio_items() -- one shared source of truth, not a second
+  hardcoded list. Confirmed live: 47 of 59 catalog titles have real
+  MP3 audio; the other 12 (mostly Service Year Reports) correctly show
+  a friendly "no audio available" instead of being silently omitted.
+  Neither Watchtower Study Audio nor NWT was deleted as redundant --
+  confirmed neither actually is: Watchtower's shortcut resolves a live
+  CURRENT issue (no other entry does that), and NWT needs its own
+  book-by-book picker nothing else replicates.
+  New main.py plumbing: SCREEN_DOWNLOAD_AUDIO_GROUP (Music/
+  Publications sub-picker, mirrors SCREEN_DOWNLOAD_VIDEO_SERIES) and
+  open_audio_pub_category()/dl_audio_pub_mode (reuses SCREEN_DOWNLOAD_
+  BROWSE in a new mode: items are normal EPUB-shaped publications,
+  selecting one fetches ITS audio instead of downloading the EPUB).
+  MAJOR INFRASTRUCTURE ADDITION this session: got real headless SDL
+  testing working in the sandbox (main.py couldn't even import before
+  -- missing libSDL2_ttf, installed via apt) -- enabled constructing a
+  real App() instance and simulating actual button presses to verify
+  navigation logic, not just reading code and hoping. Used this to
+  catch and fix THREE real bugs before they shipped: (1) a category
+  constant referenced by Python name instead of value (AUDIO_SOURCES
+  is defined earlier in the file than CATEGORY_BOOKS etc., so the real
+  constant wasn't available yet -- would have silently broken all
+  category filtering); (2) NWT's Bible-book picker's B-back target was
+  stale (unconditionally SCREEN_DOWNLOAD_AUDIO_SOURCES, skipping past
+  the new group screen entirely, since NWT moved one level deeper);
+  (3) the resolved-audio-track view's B-back logic couldn't originally
+  distinguish three different parent screens (Music/Watchtower item,
+  NWT book, or a Publications title) -- fixed with a dedicated
+  _audio_pub_return_category tracker, verified via simulated full
+  round-trips through all three paths (Music: Original Songs, 115
+  items; Publications > Books: Draw Close to Jehovah, 36 chapters;
+  Publications > Bible Reading Audio > Genesis, 50 chapters) -- each
+  confirmed to both load correctly AND walk all the way back up
+  through the right chain of screens on B. Also found and fixed:
+  list_audio_items() surfaced a raw "HTTP Error 404: Not Found" for
+  any title with no audio -- rare before (only reachable via Watchtower/
+  NWT, which basically always have audio) but now hit ~20% of the time
+  since Publications spans the whole catalog; now shows a friendly
+  "<title>" has no audio available" instead, matching the wording
+  _resolve_download_url() already uses for the equivalent no-EPUB case.
+- Systematic catalog sweep (v26.07.30.15, Kaleb: "find any other
+  brochures, tracts, books or magazines we need to add"). Compared
+  every pub code currently shown on jw.org's live Books/Brochures/
+  Tracts/Magazines/Bible pages against this app's existing catalog,
+  live-verified each candidate's real EPUB availability before adding
+  anything (never guessed). Two real additions, both confirmed:
+    - "lmd" (Love People -- Make Disciples) -- Brochures, real EPUB.
+    - "t-36" (What Is the Kingdom of God?) -- Tracts, real EPUB.
+  Both end-to-end tested: appear correctly in their category browse
+  AND a real download of each succeeded. Everything else checked but
+  NOT added, all confirmed live to have no EPUB (PDF/JWPUB/RTF/BRL/MP3
+  only): "nwtsty" (NWT Study Edition), "scl" (Scriptures for Christian
+  Living), "wcgr" (References for Walk Courageously With God), "wfg"
+  (Wisdom From the Gospels), "brfi" (Purple Triangles), "inv"/
+  "co-inv26" (meeting/convention invitations). Magazines page showed
+  nothing beyond the w/wp/g/nwtsty already covered. Bible page's
+  additional translations (bi10 KJV, bi22 ASV, by Byington, int
+  Kingdom Interlinear, rh Emphasized Bible) all JWPUB-only, no EPUB.
+- Search-discovered books now remembered permanently (v26.07.30.14,
+  Kaleb: "if I search for a book and it finds it and downloads, can we
+  cache that... for future?"). A book/brochure/tract/bible found via
+  live search (or manual pub-code entry) and successfully downloaded
+  now gets its category classified live (same finder-redirect
+  technique used to split Books/Brochures earlier this session) and
+  saved to data/jw_discovered_pubs.json. list_items()'s normal
+  category browse now merges this cache in alongside
+  STATIC_PUBLICATIONS -- the same search never has to be repeated to
+  find that title again. Periodical issues (anything with an "issue"
+  in _extra) are deliberately excluded -- that's what the wp/g/w/mwb
+  caching above is already for. Verified live end-to-end: searched
+  "Reasons for Faith", downloaded pub "rk" (not in the static table),
+  confirmed it then appears in the normal Brochures category browse
+  with no search needed -- and its classification (Brochures) matched
+  the search result's own "(BROCHURES & BOOKLETS)" subtitle
+  independently, a nice sanity check that the live classification is
+  accurate. Declined a related idea (an RSS-based background checker
+  that auto-detects brand-new book/magazine RELEASES, not just
+  already-known-pub downloads): unlike periodical issue codes, a new
+  book's pub code isn't derivable from anything in the RSS feed itself
+  -- would require scraping announcement pages with no reliable
+  pattern, too fragile to be worth it. Meeting Workbook confirmed to
+  NOT need the same multi-year backfill fix wp/g got -- mwb was never
+  vulnerable to that bug in the first place, since it's on a strict
+  derivable cadence (monthly/bi-monthly) rather than an irregular
+  per-year static table.
+- Multi-year gap backfill for wp/g (v26.07.30.13, Kaleb: "if by chance
+  it doesn't have like the last five years worth, will it check those
+  too?" -- correctly guessed it wouldn't, testing confirmed it).
+  v26.07.30.11's self-updating cache only ever probed the SINGLE
+  newest year -- if the yearly maintenance backfill (see standing
+  memory note) got skipped more than once, older gap years would
+  silently vanish from the back-issue list instead of being
+  rediscovered. Fixed both halves:
+    - generate_wp_back_issues() now walks every year from
+      WP_ANNUAL_START through the newest year in range, probing/
+      caching whichever ones are missing from WP_ANNUAL_ISSUES (not
+      just the newest one). Verified via a deliberate gap simulation
+      (temporarily wiped 2024-2026 from the static table) -- all three
+      correctly rediscovered.
+    - REAL BUG in _g_valid_issue() (caught by the same kind of gap
+      simulation, not assumed fixed): it only ever checked the SINGLE
+      current calendar year, so when that year hadn't published yet
+      (the normal case most of the year) it fell straight back to
+      AWAKE_BACK_ISSUES[0] -- silently skipping any intermediate
+      missing years entirely. Confirmed live: with 2023-2025
+      artificially removed, it returned 2022's issue instead of
+      correctly finding 2025's. Fixed to walk backward year by year
+      from the current year until one resolves, so it finds the true
+      newest issue regardless of how many trailing years are missing.
+    - Awake!'s CATEGORY_AWAKE rendering block now gives each backfilled
+      gap year (not just the single newest one) its own row with a
+      real theme via _fetch_awake_theme(), newest-first, same style as
+      every other entry in the list.
+    - Both fixes bounded to a defensive 24-year cap on the range
+      scanned per call (real gaps are expected to be at most 1-2 years
+      given the standing yearly maintenance task) -- not unbounded.
+- Awake! theme subtitles via epub_engine (v26.07.30.12, Kaleb: "can't
+  it just use epub engine to find the title?" -- exactly right).
+  GETPUBMEDIALINKS itself has no theme text anywhere (confirmed live),
+  but the REAL EPUB does: added _fetch_awake_theme(), which downloads
+  a freshly-probed issue to a throwaway temp file (~3MB, deleted
+  immediately after), opens it with the SAME epub_engine.EpubDocument
+  class the reader itself uses (no separate parser to maintain), and
+  combines the OPF's own dc:title ("Awake!, No. 1 2025" -> the "No. X
+  YYYY" numbering) with the real cover page's headline text (the
+  theme, e.g. "Coping With Rising Prices") into the same "No. X YYYY
+  -- Theme" style AWAKE_BACK_ISSUES already uses. _get_annual_issue()
+  now fetches and caches this alongside the issue code the first time
+  a new "g" issue is found; later cache hits are free (no re-fetch).
+  THREE REAL BUGS caught by testing against multiple KNOWN issues
+  before trusting any of this (not just the first success):
+    1. First attempt used spine[0] as "the cover page" -- wrong, that
+       slot is a generic cover.xhtml image wrapper; the real content
+       (with the theme text) is spine[2], after cover.xhtml/toc.xhtml.
+       Confirmed live by dumping the actual spine order.
+    2. The cover page's own <style> CSS block content was surviving
+       tag-stripping and leaking into the extracted text.
+    3. The "theme repeats twice, take the first half" heuristic broke
+       on issues where "No. X YYYY" ALSO appears a second time on the
+       cover page after the doubled theme (confirmed live: Nov 2024
+       vs Nov 2025 have different cover layouts) -- replaced with a
+       proper repeated-phrase regex, then further fixed for an
+       inconsistent zero-width space appearing in only one of the two
+       occurrences on a third test issue. Verified against 4 known
+       issues (2022/2023/2024/2025) before considering this correct;
+       real em-dash characters in the extracted theme text are left
+       as-is (that's the actual source text) rather than forced to
+       match this codebase's usual ASCII "--" convention.
+- Self-updating annual-issue cache for wp/g (v26.07.30.11, Kaleb: "can
+  we make it have a built in month checker to guess based on previous
+  issues... then update a JSON list" -- so WP_ANNUAL_ISSUES/
+  AWAKE_BACK_ISSUES stop needing a manual code edit every year).
+  New: _probe_annual_issue() live-checks every month of a given year
+  against GETPUBMEDIALINKS (Dec down to Jan, stops on first hit) for
+  wp/g specifically -- the two periodicals with no derivable monthly
+  formula (unlike w/mwb, which publish on a fixed cadence). Results
+  cache to data/jw_periodical_cache.json (at most one live check per
+  pub per calendar day -- a same-day "not out yet" result is trusted
+  without re-checking; a stale prior-day negative gets re-probed).
+  _wp_valid_issue()/_g_valid_issue() and generate_wp_back_issues() now
+  consult this for any year beyond their static tables before falling
+  back to the last confirmed year, same as before. WP_ANNUAL_ISSUES/
+  AWAKE_BACK_ISSUES themselves are UNTOUCHED -- still the free, zero-
+  network source of truth for already-confirmed years; only a
+  genuinely new year triggers a probe.
+  REAL BUG CAUGHT DURING TESTING (not just written and trusted): the
+  probe's exception handling originally treated a real "not published
+  yet" 404 (confirmed live, e.g. wp issue=202512 -- a normal miss) the
+  same as a genuine network failure, aborting the ENTIRE year's scan
+  on the very first miss. Caught by deliberately testing the probe
+  against a YEAR ALREADY KNOWN to have a real issue (2025) -- it
+  returned None instead of the real September, proving the bug rather
+  than assuming success. Fixed by catching HTTPError (a real miss)
+  separately from true network failure. Re-verified against 2025 (wp
+  and g) and 2024 (wp) afterward -- now correctly rediscovers the
+  known-correct answers independently. Awake!'s AWAKE_BACK_ISSUES loop
+  in list_items() deliberately does NOT get its own extra row for a
+  probed year -- Step 3/4's existing "(new)"/"(latest known)" entry
+  already surfaces it, and a second row would reintroduce the exact
+  duplicate-row bug fixed earlier this session for w/mwb. No per-issue
+  theme text is available from the API for a probed g year (confirmed
+  live -- GETPUBMEDIALINKS returns no theme field), so a newly probed
+  Awake! issue displays with a generic month/year label rather than
+  AWAKE_BACK_ISSUES' usual "No. X YYYY -- Theme" style until Kaleb
+  supplies the real theme for a proper static entry.
+- STALE/DUPLICATE new-issue entries for Watchtower Study and Meeting
+  Workbook (v26.07.30.10, Kaleb: "I want our app to always be on the
+  same page for new releases" -- investigating that surfaced a real,
+  reproducible bug). Root cause: the Step 3/4 "(latest known)" guess
+  entry in list_items() only skipped itself when its OWN guessed issue
+  exactly matched an RSS hit -- if RSS found a genuinely newer issue
+  than the guess (confirmed live: RSS had w=202610, the bare calendar
+  guess was 202607), BOTH got shown side by side, with the stale one
+  confusingly labeled "latest known" right below the correct "(new)"
+  entry. Fixed two ways: (1) track which PUBS (not pub+issue pairs)
+  RSS already covered, and skip the whole guess step for those -- if
+  RSS found anything real, trust it completely; (2) for w/mwb, when
+  RSS has nothing for that pub at all (confirmed live 2026-07-23 this
+  can happen -- see _mwb_probe_furthest_available()'s docstring),
+  fall back to a real GETPUBMEDIALINKS probe instead of a bare
+  calendar guess -- added _w_probe_furthest_available() to match the
+  existing mwb one. Also fixed the SEPARATE back-issue-list dedup
+  block (category_pubs loop) which still compared against the old
+  unprobed guess after the Step 3/4 fix landed -- was producing an
+  exact duplicate row (same issue, twice) instead of the original
+  wrong-value conflict; now dedups against the same probed value
+  actually displayed. Verified live end-to-end: Watchtower Study now
+  shows only "October 2026 (new)" at top (no stale July duplicate);
+  Meeting Workbook now shows "November 2026, latest known" correctly
+  (was stale "July 2026, latest known" while November was already
+  real and downloadable). wp/g unaffected -- confirmed still correct,
+  they use their own hardcoded issue tables, never guess-based.
+- JW download category audit against the real JW Library app (v26.07.
+  30.09, Kaleb's question + two screenshots of JW Library's own
+  category list). Live-verified against GETPUBMEDIALINKS and jw.org's
+  own finder redirects (https://www.jw.org/finder?wtlocale=E&pub=X --
+  follows through to the real canonical URL), nothing guessed:
+    - CATEGORY_BOOKS ("Books & Brochures") split into CATEGORY_BOOKS
+      ("Books") and new CATEGORY_BROCHURES ("Brochures and Booklets"),
+      matching jw.org's own real split. Every existing
+      STATIC_PUBLICATIONS entry reclassified via live finder redirect,
+      not guessed -- see jw_fetch.py's STATIC_PUBLICATIONS header
+      comment for the rule of thumb (brochures ~30pp, books 100+;
+      songbooks are books per Kaleb's explicit call).
+    - BUG FOUND in the process: "kt" (Would You Like to Know the
+      Truth?) was miscategorized under Books -- it's actually a Tract,
+      confirmed live. Moved to CATEGORY_TRACTS.
+    - New CATEGORY_KINGDOM_MINISTRY added ("km" -- Our Kingdom
+      Ministry) -- confirmed live to have real EPUBs for issue=YYYYMM
+      201201-201512 only (2011 and earlier: PDF/JWPUB, no EPUB; 2016+:
+      404, replaced by the Meeting Workbook). Unlike w/mwb/wp/g this is
+      a CLOSED archive with no current issue -- generate_km_back_
+      issues() is a dedicated, non-guessing generator for exactly this
+      shape. End-to-end tested: a real December 2015 issue downloaded
+      and opened correctly.
+    - Confirmed NO EPUB (PDF/JWPUB/RTF/BRL only) and NOT added: Article
+      Series (web articles only, no standalone pub), Programs
+      (co-pgm26 confirmed PDF-only), Index (dx24 confirmed PDF-only),
+      Guidelines (s-38 confirmed PDF/JWPUB/RTF/BRL, no EPUB).
+      Convention Releases has a real jw.org page but is a live-event-
+      only landing page with no stable year-round content -- not a fit
+      for a static category as-is. Outlines/Curriculums (JW Library
+      app labels) have no discoverable public jw.org URL -- likely
+      congregation-account-gated, not reachable via the public API.
+    - main.py's category picker (draw_download_categories) and the
+      per-category download folder naming are both already fully
+      data-driven off jw_fetch.CATEGORIES -- no UI/folder-naming code
+      changes needed for any of the above to show up correctly.
+- Verified (Kaleb's question): "Courage" showing for the wcg book is
+  JW's OWN internal EPUB metadata (dc:title literally says "Courage
+  (wcg-E)" in the real downloaded file), not anything this app
+  invents or overrides. Same pattern confirmed on cl/bh/gt. No app
+  change made -- Library correctly reads dc:title verbatim for every
+  book, JW or Gutenberg, with no special-casing. (A same-session
+  attempt to add a JW-official-title override was built, verified,
+  and then deliberately reverted per Kaleb's explicit preference for
+  pure unmodified metadata display.)
+- REAL RACE CONDITION in idle-suppress found and fixed (v26.07.30.07,
+  Kaleb's request: "check the code, make sure we're not including buggy
+  code like MuTube's standby issue" -- found by actually constructing
+  an adversarial timing test, not just re-reading the code). The
+  v26.07.30.02 backgrounding of suppress_idle_display()'s apply call
+  (subprocess.Popen, so a video/audio doesn't wait ~1.5s+ for HOTKEY
+  restart before it can start playing) created a real window: if
+  playback ends or fails VERY quickly -- before that background apply
+  has actually finished landing its "set idle to 0" writes -- restore_
+  idle_display()'s own correct "put the real values back" writes can
+  complete FIRST, and the still-running background apply's writes then
+  land AFTER, silently overwriting the correct restore and leaving the
+  device stuck with idle-suppression active. This is exactly the shape
+  of bug behind "won't go to standby/shutdown." CONFIRMED reproducible
+  with an adversarial mock (a deliberately slow background SET_VAR
+  paired with an immediate restore call): final state was stuck at 0/0
+  instead of the real original values, before this fix.
+  Fix: suppress_idle_display() now stores the Popen handle in a module-
+  level slot; restore_idle_display() waits on it (10s bounded timeout)
+  BEFORE doing its own work, guaranteeing correct ordering. Verified
+  three ways after the fix: (1) the exact adversarial scenario above now
+  correctly ends at the real original values, not 0/0; (2) a normal-
+  length (5s) playback session still gets a near-instant restore (the
+  background apply already finished ages ago, so the wait is a no-op in
+  the common case -- the responsiveness win from backgrounding is fully
+  preserved for every real video/audio session); (3) the full crash-
+  recovery scenario (suppress, simulated crash, recover at next startup)
+  still works correctly on top of this change.
+  This bug was introduced by PicoReader's OWN backgrounding change, not
+  inherited from MuTube (MuTube's own restore call is unconditionally
+  blocking with no equivalent backgrounding, so it doesn't have this
+  exact race -- Kaleb's instinct to double-check for exactly this kind
+  of thing was well-founded, even though the specific bug traces back to
+  our own modification rather than a copied one).
+- Idle-suppress call pattern matches MuTube's real implementation
+  (v26.07.30.02): combined bash -c calls instead of four separate ones,
+  backgrounded suppress apply, blocking restore, 120s-fallback-default
+  on restore. Idle-suppress rewrite (v26.07.30.01): calls muOS's REAL
+  func.sh shell functions (GET_VAR/SET_VAR/CAFFEINE/HOTKEY) instead of
+  reimplementing them via direct file/process manipulation, with the
+  raw-file approach kept as an automatic fallback if func.sh is
+  missing. PicoReader's own crash-recovery backup file kept fully
+  intact through all of this.
+- SELECT's show-text message (v26.07.30.03-.06): shows title + WxH/
+  codec (video) or title + codec/bitrate (audio) via mpv's own CORE
+  show-text + property-expansion, replacing a script-binding ('i' ->
+  stats/display-stats-toggle) that likely doesn't work on muOS's mpv
+  build at all (Lua is an optional mpv compile-time dependency, and the
+  stats overlay is a built-in Lua script). Verified against a REAL
+  downloaded JW.org song (not just synthetic test files) -- caught a
+  real bug this way: embedded ID3 cover art gets reported by mpv as a
+  still "video" track, so the original video/audio branch check (based
+  on whether `width` was available) misfired on real music files,
+  showing the cover art's own dimensions instead of song info. Fixed by
+  also checking mpv's real `current-tracks/video/albumart` property.
+- Icon size bug (v26.07.30.03): glyph was 128x128; muOS draws glyphs at
+  native pixel size with no scaling -- real expected size (confirmed via
+  a real shipped app, MuTube) is 21x21, no variation by resolution.
+  Glyph redesigned as a simplified silhouette (the full kaomoji+book
+  design was illegible at 21px); grid icons (60-96px, real room) keep
+  the detailed design and were also corrected to MuTube's real per-
+  resolution sizes. Grid icons in general (v26.07.30.01): apps CAN
+  bundle their own grid/<resolution>/<AppName>.png directly, not theme-
+  only as an earlier session assumed.
+- START/SELECT wiring gap (v26.07.29.14): play_video_item() and the
+  in-book-link video call site never passed joy_start/joy_select into
+  native_video.play_jw_video() at all, unlike play_video_queue_from(),
+  which had them correctly -- no key tap of any kind fired. Both call
+  sites now pass joy_start=JOY_START, joy_select=JOY_BACK.
+- Idle-suppress call pattern now matches MuTube's real implementation
+  fully (v26.07.30.02): combined bash -c calls instead of four separate
+  ones, backgrounded suppress (Popen) instead of blocking, blocking
+  restore (run) kept deliberately, and MuTube's 120s-fallback-default
+  philosophy adopted for restore. Deliberately NOT adopted: MuTube's
+  `_idle_suppress_active` guard flag -- solves a multi-call-path problem
+  PicoReader's own call-site structure doesn't have.
+- Idle-suppress rewrite (v26.07.30.01): native_video.py's suppress_
+  idle_display()/restore_idle_display() call muOS's REAL func.sh shell
+  functions (GET_VAR/SET_VAR/CAFFEINE/HOTKEY) instead of reimplementing
+  them via direct file/process manipulation. Raw-file fallback kept for
+  the func.sh-missing (sandbox/off-device) case. PicoReader's own
+  crash-recovery backup file kept fully intact through this rewrite.
+- Icon size bug (v26.07.30.03, Kaleb's on-device photo report -- icon
+  rendered HUGE, overlapping menu text): glyph was 128x128; muOS draws
+  glyphs at native pixel size with NO scaling. Confirmed muOS's real
+  expected size (21x21, no variation by resolution) by inspecting a
+  real shipped app's (MuTube) actual glyph files. Also discovered while
+  fixing it: the full detailed kaomoji+book design is illegible at
+  21px (verified by inspecting the actual rendered pixel grid) -- the
+  glyph now uses a separate, simplified silhouette-only design; the
+  detailed design is kept for grid icons (60-96px, real room to show
+  it), also corrected to MuTube's real per-resolution sizes.
+- Grid-view icons added (v26.07.30.01): apps CAN bundle their own
+  grid/<resolution>/<AppName>.png directly, not theme-only as an
+  earlier session assumed -- corrected after inspecting MuTube's real
+  package structure.
+- START/SELECT wiring gap fixed (v26.07.29.14): play_video_item() and
+  the in-book-link video call site never passed joy_start/joy_select
+  into native_video.play_jw_video() at all, unlike play_video_queue_
+  from(), which had them correctly -- no key tap of any kind fired.
+  Both call sites now pass joy_start=JOY_START, joy_select=JOY_BACK.
+  (SELECT's own separate root cause, above, needed the v26.07.30.04 fix
+  on top of this -- the wiring was necessary but not sufficient.)
+- Font-size (and other) status toast was invisible in Immersive Mode
+  specifically when the reader's Menu (X) was open -- fixed by gating
+  the true-bottom anchor on `app.screen == SCREEN_READER` specifically.
+- Font Size toast didn't display AT ALL on the six download picker
+  screens -- they never called _draw_status_bar(). Added.
+- Library empty-state message is now filter-aware (Pinned/Finished/
+  Unfinished with zero matches get a friendly message, not "no epubs
+  found" implying the whole library is empty).
+- Corner battery%/WiFi/clock overlapped at large Font Size -- fixed
+  with a dedicated, independently-capped font (15pt max).
+- Video transition glitch between queued videos -- CONFIRMED FIXED on
+  real hardware via the mpv-native-OSD-title approach.
+- Full video+audio control reshuffle (v26.07.29.05-.09), each verified
+  via real button/hat event injection through the actual production
+  translate-loop functions.
+
+-------------------------------------------------------------------------
+KNOWN OPEN ITEMS -- NOT YET CONFIRMED ON REAL HARDWARE
+
+Everything in the BUG FIXES section above and the entire A/V control
+reshuffle/A/V Controls Help work is sandbox + real-harness verified only
+(actual SDL rendering, actual production functions fed real fake
+controller events, pixel-level readback where relevant) -- genuinely
+strong verification, but NONE of it has touched actual RG CubeXX-H/
+RG34XX-SP hardware yet EXCEPT: the video transition glitch fix (Kaleb
+confirmed fixed on real hardware), and the v26.07.29.14 START/SELECT
+fix, which originated FROM a real on-device report and was root-caused
++ fixed + live-verified (captured kwargs reaching native_video from an
+actual play_video_item() call) this session, but the fix itself hasn't
+been re-confirmed working on the device yet -- flag if it isn't.
+
+Other longstanding open items: PicoReader public GitHub release build
+(JW-free) -- Kaleb will request explicitly when ready. muOS Andromeda
+(2606.0) compatibility check once released. Multi-resolution letterboxing
+padding-bar theming -- deferred until the CubeXX-H version is fully
+settled. Doom-engine port via PortMaster -- low priority, not started.
+
+-------------------------------------------------------------------------
+NOT MERE BUGS, THINGS TO KNOW BEFORE TOUCHING THESE AREAS
+
+- Wrap/image/anchor caches are keyed by file PATH only, not content -- a
+  manually-replaced file at the same path (outside the app) could show
+  stale cached content. Not reachable through any in-app action
+  (downloads always refuse "already downloaded" rather than overwrite).
+- Bible-book L2/R2 "skip Outline pages" TOC navigation is intentionally
+  tailored to that book's structure; degrades to a harmless single-step
+  for books without it.
+- Font-size hotkey (L/R) on the six download picker screens is a direct
+  hotkey; the quick menu's "Font Size +/-" items are for discoverability/
+  consistency with the Browse popup's own menu, not a separate mechanism.
+- APP ICON/GLYPH (added v26.07.29.14, corrected v26.07.30.01, SIZE
+  BUG FIXED v26.07.30.03): the menu-list icon lives INSIDE the app's
+  own installed folder, not in a theme -- confirmed via a real
+  community report about a comparable custom muOS app (Scrappy):
+  "<AppFolder>/glyph/<name>.png". For PicoReader that's
+  "PicoReader/glyph/picoreader.png" (lowercase "picoreader" to match
+  mux_launch.sh's "# ICON: picoreader" tag exactly), PLUS resolution-
+  scoped variants (glyph/720x720/, glyph/720x480/, glyph/640x480/,
+  glyph/1024x768/) alongside the root fallback. Known caveat (same
+  community report): if the app is ever installed to SD2 while muOS
+  itself is still running from SD1 (or vice versa), the glyph may not
+  show in list view unless it's also mirrored to the SD1-side path.
+  CORRECTION (v26.07.30.01): grid-view icons (the "# GRID: PicoReader"
+  tag) are NOT theme-only -- apps CAN and do bundle their own
+  grid/<resolution>/<AppName>.png directly (confirmed via a real,
+  shipped comparable app, MuTube). PicoReader does this too.
+  SIZE BUG (v26.07.30.03, Kaleb's on-device photo report -- the icon
+  rendered HUGE in the Applications list, overlapping the menu text):
+  root cause was using the SAME 128x128 PNG for the glyph as for
+  everything else. muOS does NOT scale glyph images down to fit the
+  list row -- it draws them at native pixel size. Confirmed by
+  inspecting MuTube's real shipped glyph files: EVERY glyph/*.png
+  (root and all resolution subfolders) is exactly 21x21px, with no
+  variation by resolution at all (unlike grid icons, which DO vary:
+  60-96px depending on resolution, confirmed per-folder from MuTube's
+  real package -- 720x720:90, 1024x768:96, 1280x720:90, 640x480:60,
+  720x576:72, 720x480:60). PicoReader's glyph is now a real 21x21px
+  render, matching muOS's actual expectation exactly.
+  SECOND ISSUE found while fixing the size (worth remembering for any
+  future tiny-icon work): once correctly shrunk to 21x21, the full
+  kaomoji+book design (the one used for the larger grid icons) tested
+  as a completely illegible blob at that size -- verified by rendering
+  and inspecting the raw pixel grid, not just eyeballing it. Fine
+  detail (the face, the page text lines) needs meaningfully more than
+  21px to read at all. Fix: the glyph now uses a SEPARATE, deliberately
+  simplified SVG (thick strokes, book silhouette only, no face, no text
+  lines) that was tested at 21x21 and reads clearly as an open book.
+  The full detailed design is kept for grid/*.png (60-96px, plenty of
+  room). If glyph art is ever revisited, test the ACTUAL 21x21 pixel
+  output before shipping it, not just the source art at full size --
+  something that reads fine at 512px can be pure noise at 21px.
 Recurring bug shape to watch for: UNIT MISMATCHES between "_lines[]
 index" (li) and "visual screen rows" (row). An image is ONE _lines[]
 entry but costs IMG_BOX_ROWS (14) visual rows to draw. Any code that
@@ -3539,6 +1031,17 @@ constructing App(renderer) and calling handle_button() with real button
 strings -- AST-parsing alone has missed a real bug here before (a
 str_replace that silently deleted a critical "elif" line and merged two
 screens' input handling together; still syntactically valid Python).
+Confirmed this session: SDL_RenderReadPixels works for real pixel-level
+assertions (compare a "before"/"after" scratch copy's rendered output to
+prove a visual fix actually changed what's drawn, not just that it
+compiles), and native_video.py's _translate_loop()/_audio_translate_loop()
+can be fed real fake SDL button/hat event bytes directly (construct the
+ctypes event struct, call the function with a fake vkbd that logs taps
+instead of writing to uinput) to verify controller-mapping changes
+produce the exact expected key taps in every player/mode combination --
+used to verify the whole v26.07.29.07-09 control reshuffle this way
+before delivery. Prefer this over pure code-reading for anything
+touching rendering or button dispatch when there's time to set it up.
 Crash log for boot/runtime failures: /tmp/picoreader_crash.log.
 
 ===========================================================================
@@ -3553,7 +1056,8 @@ step that isn't obviously small and bounded.
 OPEN SOURCE ATTRIBUTION -- ALWAYS FLAG IT: Any time a change ships,
 touches, or references code/assets that did not originate in this
 project, say so explicitly and plainly. Applies to the bundled fonts
-(Liberation Sans family, SIL OFL), MustardOS/muOS source referenced for
+(DejaVu Sans Condensed, Bitstream Vera-derived permissive license --
+see FONT_LICENSE.txt), MustardOS/muOS source referenced for
 launcher/controller behavior, and any future library or snippet pulled
 in from elsewhere. Never let an open-source dependency pass by silently
 as if it were original work.
@@ -3574,9 +1078,12 @@ trying to fetch it. Only fall back to theorizing from first principles
 once those sources come up empty, and say so explicitly when that's
 what's happening (don't present a guess as a confirmed root cause).
 
-CURRENT STATE header above may go stale (see VERSION NUMBERING below) --
-this project's real current version lives in the changelog, not the
-header line.
+CURRENT STATE header above may go stale over time -- the "Current
+version:" line under PROJECT STATUS is the single source of truth;
+after the v26.07.29.13 AI-notes cleanup there's no separate
+chronological changelog inside this file to fall back on anymore (see
+CHANGELOG.md for repo/release-metadata changes only, and the person's
+own chat history for full session-by-session detail if ever needed).
 
 DELIVERY FORMAT -- ALWAYS BOTH: Every delivery that changes app files
 must include (1) the individual changed file(s) and (2) a full .muxapp
@@ -3623,6 +1130,12 @@ renumber it.
 START is deliberately unbound outside the Reader screen -- reserved for
 the downloader plugin trigger, which ended up bound to Library-screen L2
 instead once actually built. Don't repurpose it without checking first.
+(This is about main.py's OWN SDL button handling/app.screen dispatch
+specifically -- native_video.py's uinput translation to mpv/ffplay
+during actual video/audio playback is a separate system with its own
+independent button meanings, e.g. START = toggle OSD there. Not a
+contradiction, just two different things listening to the same
+physical button in two different contexts.)
 
 DOWNLOADER PLUGINS: gutenberg_fetch.py (public/GitHub-safe) and
 jw_fetch.py (PRIVATE -- never publish this one) are optional,
@@ -4499,6 +2012,7 @@ class SDL_DisplayMode(ctypes.Structure):
 SDL.SDL_CreateWindow.restype = ctypes.c_void_p
 SDL.SDL_CreateRenderer.restype = ctypes.c_void_p
 SDL.SDL_GetError.restype = ctypes.c_char_p
+SDL.SDL_GetCurrentVideoDriver.restype = ctypes.c_char_p
 SDL.SDL_GetDesktopDisplayMode.argtypes = [ctypes.c_int, ctypes.POINTER(SDL_DisplayMode)]
 SDL.SDL_GetDesktopDisplayMode.restype = ctypes.c_int
 SDL.SDL_RenderSetLogicalSize.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
@@ -4861,6 +2375,17 @@ THEMES = [
 COL_BG = COL_PANEL = COL_TEXT = COL_DIM = None
 COL_LINK = COL_LINK_SEL = COL_HINT_BG = COL_HINT_TEXT = None
 COL_ACCENT = COL_MENU_SEL_BG = COL_WARNING = None
+
+# v26.07.27.29 (Kaleb's request: battery icon should reflect charge
+# level, not just charging/not-charging). Fixed, NOT theme-derived --
+# unlike COL_WARNING/COL_ACCENT above (which shift with every random
+# theme), a battery-level color needs to mean the same thing regardless
+# of which reading theme is active, the same reasoning COL_TEXT/COL_BG
+# themselves don't apply here. Ranges per Kaleb's exact spec: 50-100%
+# green, 30-50% yellow, 0-30% red.
+COL_BATTERY_GREEN = Color(76, 175, 80, 255)
+COL_BATTERY_YELLOW = Color(255, 193, 7, 255)
+COL_BATTERY_RED = Color(220, 53, 69, 255)
 
 THEME_INDEX = 0
 
@@ -5250,6 +2775,28 @@ def _hsl(h, s, l):
     return (int(r * 255), int(g * 255), int(b * 255))
 
 
+def _ensure_min_lightness_gap(value_l, anchor_l, min_delta, lo=0.08, hi=0.94):
+    """v26.07.27.23: nudges value_l (only if needed) so it's at least
+    min_delta away from anchor_l on the lightness axis -- used to keep
+    generate_random_theme()'s link/link_sel colors from landing too
+    close to that theme's own text_l. Keeps value_l on whichever side of
+    anchor_l it already started on when there's room to push further
+    that way (preserves the generator's original mid-tone intent);
+    flips to the other side only if pushing further would leave the
+    sane lo-hi range entirely."""
+    if abs(value_l - anchor_l) >= min_delta:
+        return value_l
+    if value_l >= anchor_l:
+        candidate = anchor_l + min_delta
+        if candidate > hi:
+            candidate = anchor_l - min_delta
+    else:
+        candidate = anchor_l - min_delta
+        if candidate < lo:
+            candidate = anchor_l + min_delta
+    return max(lo, min(hi, candidate))
+
+
 # v26.07.15.21: hue anchors + pairings lifted directly from Kaleb's Cava
 # Solace (cava-manager.sh's therapeutic randomizer), same reasoning --
 # muted/mid-lightness hues in these specific families read as calming
@@ -5341,9 +2888,24 @@ def generate_random_theme():
                                                      # slightly tighter
                                                      # ceiling than the
                                                      # reading-text band
+    # v26.07.27.23 (Kaleb's report, real EPUB reading -- "Enjoy Life
+    # Forever"/"Courage"/NWT: "hint bar brightness could be way brighter
+    # than overall text"). hint_text_l used to grow toward its OWN
+    # target ratio with no ceiling but 0.97 -- completely independent of
+    # text_l, so on themes where the reading-text contrast roll landed
+    # low (a dim, low-contrast text_l) the hint bar's own higher-ratio
+    # roll could easily leave hint bar text noticeably brighter than the
+    # actual reading text above it. _hint_ceiling caps growth at text_l
+    # so the hint bar is never brighter than the page you're reading --
+    # EXCEPT the one genuine edge case where text_l itself lands below
+    # the hint bar's own natural starting point (hint_bg_l + 0.08): in
+    # that rare case the hint bar would otherwise be darker than its own
+    # background (illegible), so its own minimum legibility wins instead
+    # of the general rule.
     hint_text_l = hint_bg_l + 0.08
+    _hint_ceiling = max(hint_bg_l + 0.08, min(text_l, 0.97))
     while _contrast_ratio(_hsl(hue, sat * 0.3, hint_text_l),
-                           _hsl(hue, sat_bg, hint_bg_l)) < hint_target_ratio and hint_text_l < 0.97:
+                           _hsl(hue, sat_bg, hint_bg_l)) < hint_target_ratio and hint_text_l < _hint_ceiling:
         hint_text_l += 0.01
 
     # link/link_sel lightness follows the same 48-68% mid-tone corridor
@@ -5351,6 +2913,25 @@ def generate_random_theme():
     # least-jarring stops.
     link_l = random.uniform(0.48, 0.54)
     link_sel_l = random.uniform(0.60, 0.68)
+
+    # v26.07.27.23 (Kaleb's report, same session as the hint bar fix
+    # above: "highlighted links could be a little too close to the
+    # default text brightness"). link_l/link_sel_l were drawn from a
+    # fixed corridor with no awareness of where text_l actually landed
+    # for THIS theme -- on rolls where text_l happened to fall inside
+    # or near that same 48-68% band, links (especially link_sel, the
+    # currently-selected/highlighted one navigated to via D-pad -- the
+    # one actually called "highlighted" in the UI) could end up close
+    # enough in lightness to body text to read as weak, hue-only
+    # differentiation rather than a clear visual pop. Both are now
+    # nudged (only if needed) to guarantee a minimum lightness gap from
+    # text_l -- preserves whichever side (lighter/darker) they already
+    # leaned toward when there's room, flips direction only if pushing
+    # further would leave the sane 0.08-0.94 range. link_sel gets the
+    # larger minimum gap since it's the one specifically meant to stand
+    # out as "this is what's currently selected".
+    link_l = _ensure_min_lightness_gap(link_l, text_l, 0.10)
+    link_sel_l = _ensure_min_lightness_gap(link_sel_l, text_l, 0.14)
 
     return {
         "name": family_name,  # e.g. "Sage + Sky" -- shown live and used
@@ -5808,14 +3389,23 @@ def load_settings():
 def _flush_settings_to_disk():
     """Actually writes _SETTINGS_CACHE to disk. Internal -- callers
     should go through flush_settings_now() (unconditional) or
-    save_settings() (debounced), not this directly."""
+    save_settings() (debounced), not this directly.
+
+    v26.07.28.15: same write-failure fix as _flush_pin_finished_to_disk()
+    and _flush_recents_to_disk() -- see the former's own docstring for
+    the full reasoning. This one arguably matters most of the three:
+    settings include things like Video Player preference, Font Size,
+    and Theme -- losing a change silently on a write failure with no
+    retry would be a real, if rare, regression a person could go a long
+    time without noticing.
+    """
     global _SETTINGS_DIRTY, _SETTINGS_LAST_FLUSH
     try:
         with open(SETTINGS_PATH, "w") as f:
             json.dump(_SETTINGS_CACHE, f)
+        _SETTINGS_DIRTY = False
     except Exception:
-        pass
-    _SETTINGS_DIRTY = False
+        pass  # stays dirty -- retried on the next flush attempt
     _SETTINGS_LAST_FLUSH = time.time()
 
 
@@ -5877,35 +3467,217 @@ def log_render_issue(book_path, file_path, detail):
 #   Same file muOS's own battery scripts read; no root needed, just a
 #   plain read().
 # - WiFi: standard Linux kernel sysfs (not even muOS-specific) --
-#   /sys/class/net/wlan0/operstate ("up"/"down") and .../carrier (1/0).
+#   /sys/class/net/{iface}/operstate ("up"/"down") and .../carrier (1/0).
 # Both fail soft (return None) if the paths don't exist -- e.g. when
 # testing off-device -- so the indicators simply don't draw rather than
 # crash or show fake data.
+#
+# v26.07.27.17 (Kaleb's follow-up after the battery chip-name fix:
+# "is this done for the other status checks like WiFi and clock too?").
+# Checked the same way -- every device's real network config in
+# github.com/MustardOS/internal (device/*/config/network/iface) --
+# and found the same class of gap: "wlan0" covers every device checked
+# except rg-vita-pro, which uses "wlp1s0" (a predictable-network-
+# interface-name convention) -- and "wlan1" doesn't appear in ANY real
+# device config, so it was never doing anything useful. Kept as a fast-
+# path first try (still correct for the overwhelming majority of real
+# devices, no directory scan needed), but _read_wifi_status() now falls
+# back to a genuinely generic scan if neither candidate exists -- see
+# that function's own docstring.
 _WIFI_IFACE_CANDIDATES = ("wlan0", "wlan1")
 
 
+def _find_kernel_wifi_iface():
+    """Returns the first /sys/class/net/* interface name that's a real
+    WiFi device, or None if none found (e.g. off-device testing).
+    Generic, not name-based: checks for a "phy80211" entry, the actual
+    Linux kernel signal that an interface belongs to a cfg80211
+    (wireless) driver -- present regardless of what the interface is
+    NAMED (wlan0, wlp1s0, mlan0, etc.), same "check the real kernel-
+    standard property, not a guessed name" fix as
+    _find_kernel_battery_supply_dir() uses for the battery chip."""
+    base = "/sys/class/net"
+    try:
+        entries = os.listdir(base)
+    except OSError:
+        return None
+    for entry in sorted(entries):
+        if os.path.exists(os.path.join(base, entry, "phy80211")):
+            return entry
+    return None
+
+
 def _read_battery_status():
-    """Returns (percent:int|None, charging:bool|None)."""
+    """Returns (percent:int|None, charging:bool|None).
+
+    v26.07.27.16 REAL FIX, GENERALIZED (Kaleb tested on real hardware --
+    RG34XX-SP -- and confirmed via the crash log this file itself
+    writes: /run/muos/battery/capacity genuinely does not exist on this
+    device; also confirmed muOS's OWN native UI shows no battery
+    indicator either, meaning whatever userspace daemon is supposed to
+    populate that file isn't doing so on this build -- a muOS-level
+    gap, not a wrong-path bug here).
+
+    v26.07.27.15 added a fallback hardcoded to the AXP2202 chip's real
+    sysfs path (confirmed via device/rg34xx-sp and device/rgcubexx-h's
+    own battery configs in github.com/MustardOS/internal) -- but Kaleb
+    then asked "would this work on ANY muOS device", and checking every
+    single device config in that same repo shows it genuinely wouldn't:
+    the chip name varies (axp2202-battery on most H700-family devices,
+    cw221X-bat on Vita Pro, plain "battery" on the RK-based devices),
+    and so does the charger path (axp2202-usb, sgm4154x-charger, ac).
+    Hardcoding one name only ever covers Kaleb's own two devices.
+
+    Generalized instead using the actual Linux KERNEL standard for the
+    power_supply class (not a muOS convention at all -- this is generic
+    to any Linux device): every power_supply directory exposes a "type"
+    file, and a real battery's is always "Battery" regardless of chip
+    or vendor. Scans /sys/class/power_supply/*/type for the first match
+    and reads that same directory's own "capacity" and "status"
+    properties -- "status" is Charging/Discharging/Full/Not charging/
+    Unknown per the kernel's own standard, so charging state comes from
+    the battery's own entry, not a second charger-specific lookup that
+    would still need its own separate name/path per device. This covers
+    any device with a real kernel battery driver, muOS or not -- tried
+    only as a fallback, after muOS's own normalized /run/muos/battery/*
+    path (still preferred when available, since it may be curve-
+    calibrated rather than a raw kernel percentage)."""
     percent = None
     charging = None
+    percent_source = None
+    percent_errors = []
     try:
         with open("/run/muos/battery/capacity", "r") as f:
             percent = int(f.read().strip())
-    except (OSError, ValueError):
-        pass
+        percent_source = "/run/muos/battery/capacity"
+    except (OSError, ValueError) as e:
+        percent_errors.append(f"/run/muos/battery/capacity: {type(e).__name__}: {e}")
+    charging_source = None
+    charging_errors = []
     try:
         with open("/run/muos/battery/charging", "r") as f:
             charging = f.read().strip() == "1"
-    except (OSError, ValueError):
-        pass
+        charging_source = "/run/muos/battery/charging"
+    except (OSError, ValueError) as e:
+        charging_errors.append(f"/run/muos/battery/charging: {type(e).__name__}: {e}")
+
+    if percent_source is None or charging_source is None:
+        battery_dir = _find_kernel_battery_supply_dir()
+        if battery_dir is not None:
+            if percent_source is None:
+                try:
+                    with open(os.path.join(battery_dir, "capacity"), "r") as f:
+                        percent = int(f.read().strip())
+                    percent_source = os.path.join(battery_dir, "capacity")
+                except (OSError, ValueError) as e:
+                    percent_errors.append(f"{battery_dir}/capacity: {type(e).__name__}: {e}")
+            if charging_source is None:
+                try:
+                    with open(os.path.join(battery_dir, "status"), "r") as f:
+                        charging = f.read().strip() in ("Charging", "Full")
+                    charging_source = os.path.join(battery_dir, "status")
+                except (OSError, ValueError) as e:
+                    charging_errors.append(f"{battery_dir}/status: {type(e).__name__}: {e}")
+        else:
+            percent_errors.append("no /sys/class/power_supply/*/type reported 'Battery'")
+            charging_errors.append("no /sys/class/power_supply/*/type reported 'Battery'")
+
+    _log_battery_read_result(percent, percent_source, percent_errors,
+                              charging, charging_source, charging_errors)
     return percent, charging
+
+
+def _find_kernel_battery_supply_dir():
+    """Returns the first /sys/class/power_supply/* directory whose
+    "type" file reads "Battery" AND actually has a readable "capacity"
+    file, or None if no such directory exists or /sys/class/
+    power_supply itself isn't present (e.g. off-device testing).
+    Deliberately generic -- doesn't hardcode any chip/vendor name, see
+    _read_battery_status()'s own docstring for why that matters.
+
+    v26.07.27.18 (found during a fresh bug-check pass): the first
+    version returned the first "Battery"-type match unconditionally --
+    but some boards expose a SECOND power_supply entry for an RTC/
+    backup coin-cell, also typed "Battery" by the kernel, which
+    typically reports only voltage, not a percentage. If that entry's
+    directory name happens to sort alphabetically before the real
+    battery's, this would have picked the wrong one and failed
+    entirely, even though a valid battery entry exists elsewhere in
+    the list. Now requires a readable "capacity" file as part of the
+    match, not just the type -- keeps scanning past any Battery-typed
+    entry that doesn't actually have one."""
+    base = "/sys/class/power_supply"
+    try:
+        entries = os.listdir(base)
+    except OSError:
+        return None
+    for entry in sorted(entries):
+        entry_dir = os.path.join(base, entry)
+        type_path = os.path.join(entry_dir, "type")
+        try:
+            with open(type_path, "r") as f:
+                if f.read().strip() != "Battery":
+                    continue
+        except OSError:
+            continue
+        capacity_path = os.path.join(entry_dir, "capacity")
+        try:
+            with open(capacity_path, "r") as f:
+                int(f.read().strip())  # confirm it's actually a valid percentage, not empty/garbage
+        except (OSError, ValueError):
+            continue
+        return entry_dir
+    return None
+
+
+_battery_read_failure_logged = False
+
+
+def _log_battery_read_result(percent, percent_source, percent_errors,
+                              charging, charging_source, charging_errors):
+    """Logs ONE complete summary of the battery read attempt, once per
+    app session (refresh_status_indicators() runs on every menu open,
+    so this would otherwise spam the log every time). Always shows the
+    FULL outcome -- which source actually worked, or every path tried
+    and why each failed -- rather than just the first failure, so a
+    real-device test tells us definitively whether the muOS path or
+    the sysfs fallback (or neither) is working, not just that
+    something failed somewhere."""
+    global _battery_read_failure_logged
+    if _battery_read_failure_logged:
+        return
+    _battery_read_failure_logged = True
+    try:
+        with open("/tmp/picoreader_battery.log", "a") as f:
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            if percent_source:
+                f.write(f"[{ts}] capacity: {percent}% via {percent_source}\n")
+            else:
+                f.write(f"[{ts}] capacity: ALL sources failed -- " + "; ".join(percent_errors) + "\n")
+            if charging_source:
+                f.write(f"[{ts}] charging: {charging} via {charging_source}\n")
+            else:
+                f.write(f"[{ts}] charging: ALL sources failed -- " + "; ".join(charging_errors) + "\n")
+    except OSError:
+        pass
 
 
 def _read_wifi_status():
     """Returns True/False/None (None = no wifi interface found at all,
     e.g. off-device testing -- distinct from False, which means a real
-    interface exists but isn't currently connected)."""
-    for iface in _WIFI_IFACE_CANDIDATES:
+    interface exists but isn't currently connected).
+
+    v26.07.27.17: tries _WIFI_IFACE_CANDIDATES first (fast path, no
+    directory scan, still correct for the overwhelming majority of real
+    devices), falls back to _find_kernel_wifi_iface()'s generic
+    phy80211-based scan if neither candidate exists -- covers real
+    devices with a differently-named interface (confirmed real gap:
+    rg-vita-pro uses "wlp1s0", not in the hardcoded list)."""
+    ifaces = list(_WIFI_IFACE_CANDIDATES)
+    found = _find_kernel_wifi_iface()
+    if found is not None and found not in ifaces:
+        ifaces.append(found)
+    for iface in ifaces:
         base = f"/sys/class/net/{iface}"
         if not os.path.isdir(base):
             continue
@@ -7103,6 +4875,7 @@ def fill_rect(renderer, x, y, w, h, color):
     SDL.SDL_RenderFillRect(renderer, ctypes.byref(r))
 
 
+
 def draw_line(renderer, x1, y1, x2, y2, color):
     """v26.07.21.14: thin single-pixel line, added for the new battery/
     WiFi status icons (battery outline, WiFi disconnected strike-
@@ -7405,26 +5178,53 @@ def _save_library_cache(cache):
         pass
 
 
-def list_library_folders():
+def list_library_folders(base_dir=None):
     """v26.07.23.07 (Kaleb's request: Create/Delete Folder in the
-    Library popup menu). Returns sorted top-level folder names directly
-    under LIBRARY_DIR -- deliberately only ONE level deep, matching the
-    only kind of subfolder this app itself ever creates (category
-    downloads, see start_download()'s dest_dir logic) and keeping the
-    Delete Folder picker simple; a person's own manually-made folders
-    (per the "works when person not using JW.org" requirement) are
-    almost always flat too. Nested sub-subfolders would still be found
-    fine by scan_library()'s recursive walk for reading/sorting -- they
-    just wouldn't get their own row in this specific picker."""
-    if not os.path.isdir(LIBRARY_DIR):
+    Library popup menu). Returns sorted folder names one level directly
+    under `base_dir` (LIBRARY_DIR if not given). Originally always
+    LIBRARY_DIR itself, matching the only kind of subfolder this app
+    used to create on its own (category downloads); a person's own
+    manually-made folders are almost always flat too.
+
+    v26.07.27.43 (Kaleb's request: real folder navigation, "New Folder"
+    now creates INSIDE whichever folder you're browsing -- Delete
+    Folder needed the same scoping for consistency, otherwise you could
+    create a nested folder but never delete it from in here). base_dir
+    lets the caller scope this to app.lib_current_folder instead of
+    always the root."""
+    real_dir = base_dir or LIBRARY_DIR
+    if not os.path.isdir(real_dir):
         return []
     try:
         return sorted(
-            name for name in os.listdir(LIBRARY_DIR)
-            if os.path.isdir(os.path.join(LIBRARY_DIR, name))
+            name for name in os.listdir(real_dir)
+            if os.path.isdir(os.path.join(real_dir, name))
         )
     except OSError:
         return []
+
+
+def list_all_library_folders():
+    """v26.07.27.44 (Kaleb's request: "Move to Folder" -- reorganizing
+    across branches is the whole point, so unlike list_library_folders()
+    above (deliberately one level deep, for Delete Folder/New Folder's
+    "just this level" scope) this walks the ENTIRE tree under
+    LIBRARY_DIR and returns every folder's relative path, any depth,
+    sorted. Root itself is never included here -- the Move to Folder
+    picker adds its own explicit "(Library Root)" option separately,
+    since "" isn't a real folder name to display in a list."""
+    if not os.path.isdir(LIBRARY_DIR):
+        return []
+    results = []
+    try:
+        for dirpath, dirnames, _filenames in os.walk(LIBRARY_DIR):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            rel = os.path.relpath(dirpath, LIBRARY_DIR)
+            if rel != ".":
+                results.append(rel)
+    except OSError:
+        return []
+    return sorted(results)
 
 
 def find_existing_file_elsewhere(filename, dest_dir, search_root):
@@ -7451,6 +5251,79 @@ def find_existing_file_elsewhere(filename, dest_dir, search_root):
             if os.path.abspath(found) != os.path.abspath(target):
                 return found
     return None
+
+
+def _migrate_stray_if_flat(stray, dest_dir, search_root, classify_fn):
+    """v26.07.30.31 (Kaleb: "don't make it migrate manually make it
+    passive so that if it see it in a flat folder and moves it to
+    proper folder rather then downloading" + "should only do this
+    during downloads to prevent duplications" -- replaces the earlier
+    v26.07.30.30 manual "Migrate Downloads" menu action entirely).
+    Called whenever find_existing_file_elsewhere() finds a stray copy
+    of a file about to be downloaded -- exactly the one moment a
+    duplicate would otherwise be created, so migrating right here
+    naturally can't ever cause one.
+
+    If that stray copy is sitting in an old FLAT-structure folder
+    (from before the folder-nesting work, or a later rename) -- NOT
+    already under the plugin's own PLUGIN_NAME-wrapped structure,
+    where a different-but-valid category is a deliberate, permanent
+    choice (see the "series section files... reduce ping-ponging"
+    reasoning above) -- and that flat folder can be confidently
+    classified as safe (see jw_fetch.classify_audio_folder()/
+    classify_video_folder()'s own docstrings for what "safe" means and
+    why some folders -- Watchtower/Meeting Workbook/either Bible
+    edition -- are deliberately never auto-sorted), moves it into
+    dest_dir (the correct destination for THIS download) right now.
+
+    Returns the file's final path (moved or not) -- the caller always
+    treats this as "already downloaded, don't fetch again" either way;
+    this function's only job is deciding where the existing copy
+    should end up living, never whether to skip the download.
+
+    Never overwrites -- if dest_dir already somehow has a file with
+    this name (shouldn't happen, find_existing_file_elsewhere() only
+    ever returns matches OUTSIDE dest_dir, but checked anyway as a
+    defensive backstop), the stray copy is left exactly where it was
+    rather than risking a silent overwrite. Any OSError during the
+    actual move (permissions, disk full, whatever) falls back the same
+    way -- never loses the file, worst case it just stays put."""
+    plugin_name = getattr(JW_PLUGIN, "PLUGIN_NAME", None)
+    plugin_folder = JW_PLUGIN.sanitize_folder_name(plugin_name) if plugin_name else None
+    if not plugin_folder:
+        return stray
+    plugin_root = os.path.join(search_root, plugin_folder)
+    if os.path.abspath(stray).startswith(os.path.abspath(plugin_root) + os.sep):
+        return stray  # already under the current structure -- a
+                       # deliberate different-category placement, leave it
+    if not classify_fn:
+        return stray
+    try:
+        rel = os.path.relpath(stray, search_root)
+    except ValueError:
+        return stray
+    top_folder = rel.split(os.sep)[0]
+    try:
+        kind, _info = classify_fn(top_folder)
+    except Exception:
+        return stray
+    if kind != "safe":
+        return stray  # ambiguous/unknown -- never guess, leave it exactly where it is
+    new_path = os.path.join(dest_dir, os.path.basename(stray))
+    if os.path.exists(new_path):
+        return stray  # defensive -- never overwrite
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.move(stray, new_path)
+    except OSError:
+        return stray  # move failed for any reason -- keep the file where it was
+    old_dir = os.path.dirname(stray)
+    try:
+        if os.path.abspath(old_dir) != os.path.abspath(search_root) and not os.listdir(old_dir):
+            os.rmdir(old_dir)
+    except OSError:
+        pass  # cosmetic cleanup only -- a leftover empty folder is harmless
+    return new_path
 
 
 def find_existing_book_elsewhere(filename, dest_dir):
@@ -7510,6 +5383,33 @@ def migrate_book_state(old_path, new_path):
         finished.discard(old_relpath)
         finished.add(new_relpath)
         save_finished(finished)
+
+    # v26.07.28.16 BUG FIX (Kaleb's request: "anything else in error
+    # handling needs review" -- found by specifically checking this
+    # function's sibling, move_book(), for the exact same debounce race
+    # its own v26.07.28.12 fix addressed, since both do the identical
+    # pinned/finished migration against the same debounced save_pinned()/
+    # save_finished(). This function's caller (stray-file resolution
+    # during a download) can plausibly call refresh_library() shortly
+    # after -- e.g. returning to Library once the download finishes --
+    # which would reload pinned/finished straight from disk and silently
+    # clobber this migration if the debounce window hadn't elapsed yet.
+    # Same fix: force the write to actually land before returning.
+    flush_pin_finished_now()
+
+    # v26.07.28.16: same library_cache.json metadata migration
+    # move_book() got in v26.07.28.14 (Kaleb's request: "reduce CPU and
+    # cache writing") -- without this, the title/author entry for
+    # old_relpath just gets silently dropped by scan_library()'s own
+    # stale-purge and rebuilt via a real EPUB re-parse under new_relpath
+    # on the next scan. Not wrong, just wasteful, same reasoning as
+    # move_book()'s own fix -- this function's caller runs during a
+    # download, exactly the kind of moment extra avoidable CPU work is
+    # least welcome.
+    cache = _load_library_cache()
+    if old_relpath in cache:
+        cache[new_relpath] = cache.pop(old_relpath)
+        _save_library_cache(cache)
 
     bookmarks = load_bookmarks()
     if old_path in bookmarks:
@@ -7640,6 +5540,30 @@ def scan_library():
             finished.discard(relpath)
             save_finished(finished)
 
+    if stale:
+        # v26.07.28.13 REAL BUG FIX (Kaleb's question: "will manually
+        # deleted books get their orphaned pins purged too?" -- checked
+        # by actually testing it rather than trusting this function's
+        # own docstring claim, same as the move_book() debounce bug
+        # this mirrors exactly). save_pinned()/save_finished() above are
+        # debounced (same PIN_FINISHED_FLUSH_DEBOUNCE_SECONDS = 3s
+        # window as move_book()'s own v26.07.28.12 fix) -- but
+        # refresh_library(), scan_library()'s only real caller, reloads
+        # self.pinned/self.finished from disk via load_pinned()/
+        # load_finished() immediately after this function returns.
+        # Confirmed by direct test: a manually-deleted book's stale pin
+        # entry survived refresh_library() completely intact --  the
+        # purge above ran, computed the correct discard, called the
+        # debounced save, and then got silently overwritten by
+        # refresh_library()'s own very next lines reloading the
+        # pre-purge file from disk before the debounce window had
+        # elapsed. Caches were never affected by this (they're deleted
+        # directly via os.remove() above, no debounce involved) -- only
+        # pinned/finished status was actually at risk, which is exactly
+        # what made this easy to miss without a real test: the caches
+        # "looked" fully purged while pins silently weren't.
+        flush_pin_finished_now()
+
     if cache_dirty:
         _save_library_cache(cache)
 
@@ -7683,22 +5607,43 @@ def _flush_pin_finished_to_disk():
     """Internal -- writes whichever of pinned/finished is actually
     dirty. Callers should go through flush_pin_finished_now()
     (unconditional) or the debounced path inside save_pinned()/
-    save_finished(), not this directly."""
+    save_finished(), not this directly.
+
+    v26.07.28.15 REAL BUG FIX (Kaleb's request: "make sure nothing gets
+    corrupted on these transitions... error migration handling").
+    Found by specifically checking what happens on a WRITE failure, not
+    just the read-back-too-soon race v26.07.28.12 already fixed. Both
+    dirty flags used to get cleared unconditionally, even when the
+    try/except above caught a real write failure (SD card full,
+    unmounted, read-only, permission error) -- meaning that pending
+    pin/finished change was silently discarded FOREVER, not just
+    delayed: the next flush attempt would see the flag already False
+    and never retry, and pinned.json/finished.json on disk would keep
+    whatever they last successfully held. Unlike the render/metadata
+    caches, pinned/finished have no self-healing "gets pitched away and
+    rebuilt" fallback -- there's nothing to rebuild THEM from, they ARE
+    the source of truth for which books Kaleb cares about. Each flag is
+    now only cleared inside its own try block, right after a write that
+    actually succeeded -- a failure leaves it dirty for the next
+    debounced attempt or the next flush_pin_finished_now() call (quit,
+    book-close) to retry, instead of giving up silently after one
+    failed attempt.
+    """
     global _PIN_DIRTY, _FINISHED_DIRTY, _PIN_FINISHED_LAST_FLUSH
     if _PIN_DIRTY:
         try:
             with open(PINNED_PATH, "w") as f:
                 json.dump(sorted(_PENDING_PINNED_SET), f)
+            _PIN_DIRTY = False
         except Exception:
-            pass
-        _PIN_DIRTY = False
+            pass  # stays dirty -- retried on the next flush attempt
     if _FINISHED_DIRTY:
         try:
             with open(FINISHED_PATH, "w") as f:
                 json.dump(sorted(_PENDING_FINISHED_SET), f)
+            _FINISHED_DIRTY = False
         except Exception:
-            pass
-        _FINISHED_DIRTY = False
+            pass  # stays dirty -- retried on the next flush attempt
     _PIN_FINISHED_LAST_FLUSH = time.time()
 
 
@@ -7740,8 +5685,188 @@ def save_finished(finished_set):
         _flush_pin_finished_to_disk()
 
 
-LIBRARY_FILTER_MODES = ["all", "unfinished", "finished"]
-LIBRARY_FILTER_LABELS = {"all": "All", "unfinished": "Unfinished", "finished": "Finished"}
+# ============================================================
+# Recently Played/Read -- v26.07.27.31 (Kaleb's request: one combined
+# list mixing books, video, and audio, newest first, capped, reachable
+# from the Library popup menu). Same debounced-write pattern as pinned/
+# finished above -- Kaleb's own explicit ask ("limit on how often it
+# writes to disk"), so this reuses the exact same RAM-first + debounce-
+# timer shape rather than inventing a new one.
+#
+# Each entry is a plain dict: {"kind": "book"|"video"|"audio", "title":
+# ..., plus whatever kind-specific fields are needed to re-open/re-play
+# it later}. For "book": "relpath" (same key Library's own scan uses --
+# open_book() only ever needs book["path"]/book["title"], and "path" is
+# trivially rebuilt as os.path.join(LIBRARY_DIR, relpath)). For "video"/
+# "audio": a filtered snapshot of the played item's own dict, kept to
+# JSON-safe primitive fields only (title/filename/track/_raw_lank/
+# _video_url/_audio_url) -- the same fields play_video_item()/
+# play_audio_item() already need, not the item's full original shape
+# (some of which -- category source dicts -- aren't JSON-safe as-is).
+#
+# Deliberately NOT recorded from play_video_queue_from()/
+# play_audio_queue_from() (Play All/Shuffle All) -- a single shuffle
+# session could otherwise flood this list with 15+ songs from one
+# sitting, defeating the point of a *recent, distinct items* list.
+# Only single-item Stream/Play (and opening a book) count.
+#
+# Known limitation, accepted rather than engineered around: a "video"/
+# "audio" entry's cached _video_url/_audio_url can go stale over time
+# (JW.org's CDN URLs are time-limited and can change -- see jw_fetch.py's
+# own comments on this). Re-opening from Recents falls through the SAME
+# lazy re-resolve path (_raw_lank -> resolve_search_*_item(), or a
+# track-matched re-fetch) that already handles this for a stale URL
+# within one session -- this isn't a new risk, just the same one
+# stretched across a longer time window. A category-sourced item with
+# no _raw_lank at all and a since-expired URL would fail with a normal
+# network/not-found error, same as any other stale-link failure
+# elsewhere in the app, not a crash.
+RECENTS_PATH = os.path.join(DATA_DIR, "recents.json")
+RECENTS_MAX = 50
+_RECENTS_LIST = None  # lazy-loaded, see load_recents()
+_RECENTS_DIRTY = False
+_RECENTS_LAST_FLUSH = 0.0
+RECENTS_FLUSH_DEBOUNCE_SECONDS = 3.0
+
+
+def load_recents():
+    global _RECENTS_LIST
+    if _RECENTS_LIST is not None:
+        return _RECENTS_LIST
+    if os.path.exists(RECENTS_PATH):
+        try:
+            with open(RECENTS_PATH) as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                _RECENTS_LIST = data[:RECENTS_MAX]
+                return _RECENTS_LIST
+        except Exception:
+            pass
+    _RECENTS_LIST = []
+    return _RECENTS_LIST
+
+
+def _flush_recents_to_disk():
+    # v26.07.28.15: same write-failure fix as _flush_pin_finished_to_disk()
+    # above, same reasoning -- see that function's own docstring for the
+    # full explanation. History has slightly more graceful degradation
+    # than pinned/finished (a lost entry just means one book/video/audio
+    # item stops showing as recently played, not a permanently wrong
+    # pinned/finished status), but there's still no reason to silently
+    # give up on a retry-able write failure when not giving up costs
+    # nothing.
+    global _RECENTS_DIRTY, _RECENTS_LAST_FLUSH
+    if _RECENTS_DIRTY:
+        try:
+            with open(RECENTS_PATH, "w") as f:
+                json.dump(_RECENTS_LIST or [], f)
+            _RECENTS_DIRTY = False
+        except Exception:
+            pass  # stays dirty -- retried on the next flush attempt
+    _RECENTS_LAST_FLUSH = time.time()
+
+
+def flush_recents_now():
+    """Unconditional immediate write, bypassing the debounce -- call at
+    the same quit/book-close checkpoints flush_pin_finished_now() uses."""
+    if _RECENTS_DIRTY:
+        _flush_recents_to_disk()
+
+
+_RECENT_ITEM_SAFE_FIELDS = ("title", "filename", "track", "_raw_lank", "_video_url", "_audio_url")
+
+
+def record_recent(kind, title, item=None, relpath=None):
+    """Adds one entry to the front of the Recently Played/Read list,
+    removing any existing entry for the same thing first (so re-playing
+    something already in the list moves it to the top rather than
+    duplicating it), then caps at RECENTS_MAX. Debounced disk write,
+    same pattern/timer as save_pinned()/save_finished().
+
+    kind: "book", "video", or "audio".
+    title: display title, also part of the dedup key.
+    item: for video/audio, the played item's dict -- filtered down to
+    _RECENT_ITEM_SAFE_FIELDS before storing.
+    relpath: for book, the Library-relative path (dedup key + how it's
+    re-opened later)."""
+    global _RECENTS_DIRTY
+    recents = load_recents()
+    dedup_key = relpath if kind == "book" else title
+    recents[:] = [r for r in recents
+                  if not (r.get("kind") == kind
+                          and (r.get("relpath") if kind == "book" else r.get("title")) == dedup_key)]
+    entry = {"kind": kind, "title": title, "ts": time.time()}
+    if kind == "book":
+        entry["relpath"] = relpath
+    elif item:
+        for field in _RECENT_ITEM_SAFE_FIELDS:
+            val = item.get(field)
+            if isinstance(val, (str, int, float, bool)) or val is None:
+                entry[field] = val
+    recents.insert(0, entry)
+    del recents[RECENTS_MAX:]
+    _RECENTS_DIRTY = True
+    if time.time() - _RECENTS_LAST_FLUSH >= RECENTS_FLUSH_DEBOUNCE_SECONDS:
+        _flush_recents_to_disk()
+
+
+def purge_recent_book(relpath):
+    """v26.07.27.32 (Kaleb's request, bug-check follow-up): removes any
+    History entry pointing at this book relpath, if one exists --
+    no-op (and no disk write at all) if there wasn't one. Called by
+    delete_book() so a deleted book can't leave a permanently-dangling
+    History entry behind, same "purge on delete" spirit scan_library()'s
+    own existing pin/finished cleanup already has, just extended to
+    cover History too now that it exists. Deliberately NOT hooked into
+    Delete Folder -- that action only ever removes a folder already
+    confirmed empty (refuses otherwise), so no book, and therefore no
+    History entry, could ever have existed inside it in the first
+    place."""
+    global _RECENTS_DIRTY
+    recents = load_recents()
+    before = len(recents)
+    recents[:] = [r for r in recents if not (r.get("kind") == "book" and r.get("relpath") == relpath)]
+    if len(recents) != before:
+        _RECENTS_DIRTY = True
+        if time.time() - _RECENTS_LAST_FLUSH >= RECENTS_FLUSH_DEBOUNCE_SECONDS:
+            _flush_recents_to_disk()
+
+
+def update_recent_book_relpath(old_relpath, new_relpath):
+    """v26.07.27.44 (Kaleb's request: "Move to Folder"). Unlike
+    purge_recent_book() (the book is GONE, so the entry is removed),
+    a moved book still exists -- just at a new relpath -- so its
+    History entry is updated in place instead of dropped, same reason
+    move_book() carries pinned/finished status over rather than losing
+    it."""
+    global _RECENTS_DIRTY
+    recents = load_recents()
+    changed = False
+    for r in recents:
+        if r.get("kind") == "book" and r.get("relpath") == old_relpath:
+            r["relpath"] = new_relpath
+            changed = True
+    if changed:
+        _RECENTS_DIRTY = True
+        if time.time() - _RECENTS_LAST_FLUSH >= RECENTS_FLUSH_DEBOUNCE_SECONDS:
+            _flush_recents_to_disk()
+
+
+# v26.07.28.02 (Kaleb's request: "Folders" filter, replacing the old
+# always-on folder-scoping): real folder navigation (breadcrumb,
+# enter/exit, New/Delete Folder) used to apply to EVERY sort mode
+# unconditionally (v26.07.27.43) -- so switching Sort while browsing
+# also silently switched from a flat whole-library list to whatever
+# single folder you happened to be in, which read as the sort modes
+# themselves being broken. Folders is now its own Filter option:
+# selecting it is the ONLY time the view is scoped to the current
+# folder and subfolder rows appear; every other filter (All/
+# Unfinished/Finished/Pinned) shows the flat whole-library list, same
+# as before real folder navigation existed, and all six sort modes
+# work normally across it.
+LIBRARY_FILTER_MODES = ["all", "unfinished", "finished", "pinned", "folders"]
+LIBRARY_FILTER_LABELS = {"all": "All", "unfinished": "Unfinished", "finished": "Finished",
+                          "pinned": "Pinned", "folders": "Folders"}
 
 LIBRARY_SORT_MODES = ["title", "author", "last_read", "recent", "filename", "folder"]
 LIBRARY_SORT_LABELS = {
@@ -7835,6 +5960,7 @@ SCREEN_SPLASH = "splash"  # v26.07.10.05: boot splash, shown before whatever
 SCREEN_MENU = "menu"
 SCREEN_TOC = "toc"
 SCREEN_BOOKMARKS = "bookmarks"
+SCREEN_RECENTLY_PLAYED = "recently_played"
 SCREEN_STORAGE = "storage"
 SCREEN_VIDEO_SETTINGS = "video_settings"  # v26.07.20.09: same collapse-
                         # into-submenu pattern as SCREEN_THEME_MENU below
@@ -7877,10 +6003,33 @@ SCREEN_DOWNLOAD_AUDIO_SOURCES = "download_audio_sources"  # v26.07.10.01:
                                                # same idea as
                                                # SCREEN_DOWNLOAD_VIDEO_SOURCES,
                                                # reached from CATEGORY_AUDIO
+SCREEN_DOWNLOAD_AUDIO_GROUP = "download_audio_group"  # v26.07.30.16:
+                                               # sub-picker for AUDIO_SOURCES
+                                               # entries marked
+                                               # "subcategories": [...]
+                                               # ("Music"/"Publications") --
+                                               # mirrors SCREEN_DOWNLOAD_
+                                               # VIDEO_SERIES exactly, just
+                                               # for the audio side, which
+                                               # didn't have this nesting
+                                               # level before this session.
 SCREEN_DOWNLOAD_AUDIO_BOOKS = "download_audio_books"  # v26.07.10.01: the
                                                # Bible-book sub-picker for
                                                # AUDIO_SOURCES entries
                                                # marked "books": True --
+SCREEN_DOWNLOAD_AUDIO_ISSUES = "download_audio_issues"  # v26.07.30.28:
+                                               # back-issue picker for
+                                               # AUDIO_SOURCES entries
+                                               # marked "issues": True
+                                               # (Watchtower Study/Meeting
+                                               # Workbook audio) -- same
+                                               # idea as SCREEN_DOWNLOAD_
+                                               # AUDIO_BOOKS, but the list
+                                               # is populated async (needs
+                                               # an RSS check) via a new
+                                               # open_audio_issue_picker(),
+                                               # not built statically like
+                                               # BIBLE_BOOKS is.
 SCREEN_DOWNLOAD_VIDEO_SERIES = "download_video_series"  # v26.07.15.09:
                                                # same idea as
                                                # SCREEN_DOWNLOAD_AUDIO_BOOKS,
@@ -7928,6 +6077,17 @@ SCREEN_DOWNLOAD_QUICK_MENU = "download_quick_menu"  # v26.07.24.04
                         # exact same App method its own dedicated button
                         # already does -- see draw_download_browse_menu()
                         # for the dynamic item list.
+SCREEN_AV_HELP = "av_help"  # v26.07.29.10 (Kaleb's request): unified
+                        # A/V Controls Help -- one static overlay
+                        # documenting both video and audio playback
+                        # controls (they're the same button scheme now,
+                        # see native_video.py's own control docstrings),
+                        # reachable via the quick menu (X) on all six
+                        # download/browse picker screens. Deliberately
+                        # NOT reachable during actual playback -- mpv/
+                        # ffplay own the whole screen once launched, so
+                        # this only ever needs to live on the picker
+                        # screens you launch playback FROM.
 SCREEN_LIBRARY_MENU = "library_menu"          # X on Library (was START
                                                # before v26.07.12.05) --
                                                # sort shortcuts + Download
@@ -7944,6 +6104,21 @@ SCREEN_LIBRARY_DELETE_FOLDER = "library_delete_folder"  # v26.07.23.07:
                                                # made manually), same
                                                # two-press-confirm safety
                                                # as "Delete Book".
+SCREEN_LIBRARY_MOVE_FOLDER = "library_move_folder"  # v26.07.27.44
+                                               # (Kaleb's request):
+                                               # "Move to Folder" picker
+                                               # -- moves the book
+                                               # highlighted when the
+                                               # Library popup menu was
+                                               # opened into a different
+                                               # folder (or back to the
+                                               # root). Lists every
+                                               # folder in the WHOLE
+                                               # library, any depth, not
+                                               # just the current level
+                                               # -- reorganizing across
+                                               # branches is the whole
+                                               # point.
 SCREEN_IMAGE_VIEW = "image_view"              # v0.1.124: fullscreen image
                                                # maximize mode -- A on a
                                                # selected reader image.
@@ -8029,9 +6204,10 @@ AUDIO_SOURCE_ITEMS.append("Back")
 # Sort/Add Bookmark redundancy cleanup earlier this week. Mark
 # Finished/Unfinished stays menu-only; that decision wasn't revisited.
 LIBRARY_MENU_ITEMS = ["Continue Reading", "Mark Finished/Unfinished",
-                       "Filter: Cycle", "Clear All Finished",
+                       "Filter: Cycle", "Clear All Finished", "History",
                        "Themes...", "New Folder", "Delete Folder",
-                       "Download Books", "Settings", "Delete Book", "Back"]
+                       "Download Books", "Settings", "Move to Folder",
+                       "Delete Book", "Back"]
 
 # v26.07.15.24 (Kaleb's request: "don't overclutter the popup menu"):
 # every theme-related action lives in this submenu instead of inline in
@@ -8063,11 +6239,11 @@ TEXT_ENTRY_GRID = [
 ]
 
 MENU_ITEMS = ["Chapters", "Bookmarks", "Font Size +", "Font Size -",
-              "Themes...", "Immersive Mode", "Sound Effects", "Night Mode",
+              "Themes...", "Immersive Mode", "Fast Scroll", "Sound Effects", "Night Mode",
               "Image Dimming", "Video Settings",
               "Settings", "Library", "Exit App"]
 
-VIDEO_SETTINGS_ITEMS = ["Video Fill Screen", "Streaming Quality", "Video Player", "Back"]
+VIDEO_SETTINGS_ITEMS = ["Fill Screen", "Streaming Quality", "Video Player", "Back"]
 # v26.07.21.28 (Kaleb's request): "360p" added as a real, valid quality
 # tier -- jw.org's own video API actually serves 240p/360p/480p/720p
 # (see VIDEO_LABEL_FALLBACK's own comment), so this isn't inventing
@@ -8140,10 +6316,39 @@ class App:
         self.finished = load_finished()
         self.lib_sort_mode = "title"
         self.lib_filter_mode = "all"  # v0.1.117: All/Unfinished/Finished,
+                                       # v26.07.27.25 added Pinned as a
+                                       # fourth mode (Kaleb's request).
                                        # resets each launch same as sort mode
         self._all_books = []  # unfiltered disk scan; self.books is the
                                # filtered+sorted view derived from this
         self.books = []
+        # v26.07.27.43 (Kaleb's request: Library should navigate folders
+        # like a real file manager instead of one flat list with a
+        # "-- FolderName" text label). "" means root. Sort/Filter/Pin
+        # stay GLOBAL settings (Kaleb's own choice) -- they still apply
+        # to whatever folder-scoped subset is currently shown, they're
+        # just not saved per-folder.
+        self.lib_current_folder = ""
+        self.lib_subfolders = []  # real subfolder NAMES of the current
+                                   # folder, scanned from disk each time
+                                   # _apply_library_view() runs -- so an
+                                   # empty folder still shows up as
+                                   # navigable, not just folders that
+                                   # happen to contain a book already.
+        # v26.07.28.10 (Kaleb's request: multi-select for Move to
+        # Folder). A set of relpaths, R2-toggled per book row, session-
+        # only (never persisted -- there's no scenario where reopening
+        # the app with a stale multi-select from last time is useful,
+        # and it'd be one more state a person forgets they left set).
+        # Deliberately a plain set keyed by relpath, same identity
+        # convention self.pinned/self.finished already use -- survives
+        # a Sort change (order-only, doesn't affect WHICH books exist)
+        # but gets explicitly cleared on anything that changes WHAT'S
+        # being browsed (folder navigate, Filter change) since a
+        # selection made in one context silently carrying into a
+        # completely different book list would be a real "acted on the
+        # wrong books" risk, not just a cosmetic staleness issue.
+        self.lib_selected = set()
         self.lib_index = 0
         self.refresh_library()
 
@@ -8155,6 +6360,17 @@ class App:
         self.scroll = 0
         self.selected_span = 0
         self.fast_scroll = False   # toggled by Y in the reader: 10x jump for D-pad
+        # v26.07.27.08 (Kaleb's request -- Feature #2, "Reader Mode Fast
+        # Toggle"): persistent setting controlling what fast_scroll
+        # STARTS at when a book opens -- "manual" (default, unchanged
+        # behavior: always starts off, Y toggles per-session same as
+        # before) or "always_on" (starts on every time a book opens, but
+        # Y can still turn it off for that session -- this setting only
+        # changes the starting default, not a hard lock). Same load-
+        # once-at-startup pattern as video_player_pref just above.
+        self.fast_scroll_default = load_settings().get("fast_scroll_default", "manual")
+        if self.fast_scroll_default not in ("manual", "always_on"):
+            self.fast_scroll_default = "manual"  # defensive, same reasoning as video_player_pref's own guard
         # Parallel to ReaderState.back_stack (which only remembers file+anchor).
         # Without this, "B" after following a footnote always snapped back to
         # the top of the chapter instead of wherever the reader actually was,
@@ -8182,6 +6398,16 @@ class App:
         self.toc_index = 0
         self.bookmarks_index = 0
         self._bookmark_delete_confirm_idx = None  # armed-for-delete row, or None
+        self.recents_index = 0  # v26.07.27.31: History screen selection
+        self._recents_clear_armed = False  # armed-for-clear-all state
+        # v26.07.27.34 BUG FIX (found during a requested bug-check): B on
+        # the History screen used to hardcode SCREEN_LIBRARY, jumping
+        # PAST the Library Menu it was actually opened from -- every
+        # other Library Menu submenu (Theme Menu, Storage) correctly
+        # tracks where it was opened from via its own _return_screen
+        # attribute and returns there on Back, so this now matches that
+        # established convention instead of being the one exception.
+        self._recents_return_screen = SCREEN_LIBRARY_MENU
         # v0.1.117: book delete moved from a direct SELECT press on the
         # Library screen into the Library Menu (X; was START before
         # v26.07.12.05), to free SELECT up for the new Finished/
@@ -8216,6 +6442,12 @@ class App:
         # Book) above, just scoped to whichever folder is highlighted.
         self.lib_delete_folder_index = 0
         self._menu_delete_folder_armed = False
+
+        # v26.07.27.44 (Kaleb's request): "Move to Folder" picker
+        # selection -- no armed/confirm state needed, moving a book
+        # isn't destructive the way deleting is (nothing is lost, it's
+        # still right there in the new folder).
+        self.lib_move_folder_index = 0
 
         self.theme_menu_index = 0  # selection on SCREEN_THEME_MENU
         self.video_settings_index = 0  # v26.07.20.09: selection on SCREEN_VIDEO_SETTINGS
@@ -8279,6 +6511,13 @@ class App:
                                       # picker screens opened the quick
                                       # menu, so B/Back returns to the
                                       # right one.
+        self.av_help_return_screen = SCREEN_DOWNLOAD_SOURCES
+                                      # v26.07.29.10: which of the six
+                                      # picker screens' quick menu opened
+                                      # A/V Controls Help, so B returns
+                                      # to the right one -- same pattern
+                                      # as dl_help_return_screen above.
+        self.av_help_scroll = 0
 
         # v26.07.16.24: Settings > Credits / License and Settings > Help --
         # same static-scroll-overlay pattern as dl_help above (return
@@ -8343,6 +6582,18 @@ class App:
         # call with booknum added in.
         self.audio_source_index = 0
         self.audio_book_index = 0
+        # v26.07.30.28 (Kaleb: "did we implement the full backlog of
+        # watchtowers and awakes and study issues too just like epub?
+        # but the audio?" -- real gap found: audio only ever offered
+        # "This Week", even though real back-issue audio exists back to
+        # at least 2016, same historical depth as EPUB). audio_issue_
+        # index/_dl_audio_issue_list mirror audio_book_index/
+        # BIBLE_BOOKS' role for the new SCREEN_DOWNLOAD_AUDIO_ISSUES
+        # picker -- unlike BIBLE_BOOKS (a fixed constant), this list is
+        # fetched async (needs a live RSS check) via open_audio_issue_
+        # picker(), so it's cached per-visit rather than built once.
+        self.audio_issue_index = 0
+        self._dl_audio_issue_list = []
         self.dl_is_audio = False
         self._pending_audio_source = None
         # v26.07.23.01 (Kaleb's request): "Download All" for the real
@@ -8363,6 +6614,78 @@ class App:
         # "books" sources, so a separate attribute is needed rather than
         # overloading that one.
         self._current_audio_source = None
+        # v26.07.30.22 (Kaleb's request: nest audio downloads under a
+        # plugin-named folder, so they don't mix with other apps'
+        # regular music, AND mirror the real Music/Publications
+        # grouping -- "so that we don't mix up what we have made vs
+        # regular music from other apps"). Tracks which top-level
+        # AUDIO_SOURCES group ("Music" or "Publications") the currently
+        # open leaf source came from -- set whenever SCREEN_DOWNLOAD_
+        # AUDIO_GROUP's "A" handler opens something, cleared (None) for
+        # Search Audio (no group). _category_dest_dir() uses this to
+        # build .../<PLUGIN_NAME>/<this label>/<leaf label>.
+        self._current_audio_group_label = None
+        # v26.07.30.24 BUG FIX (Kaleb asked "how would nwt get
+        # foldered" -- testing the answer surfaced a real bug): every
+        # Bible book's audio was landing in the SAME "Bible Reading
+        # Audio (NWT)" folder with NO per-book separation, and every
+        # book's chapter files use the exact same names regardless of
+        # book (confirmed live: Genesis chapter 1 and Exodus chapter 1
+        # both produce "Chapter 1.mp3") -- downloading a second book
+        # would silently overwrite the first book's same-numbered
+        # chapters. Tracks which Bible book is currently selected so
+        # _category_dest_dir() can give each book its own subfolder
+        # (.../Bible Reading Audio (NWT)/Genesis/, .../Exodus/, ...).
+        # Cleared (None) for every other audio source so it can't leak.
+        self._current_audio_book_label = None
+        # v26.07.30.25 (Kaleb: "if there are multiple watchtowers and
+        # awakes do we account for that?"): same idea as
+        # _current_audio_book_label just above, but for Watchtower
+        # Study/Meeting Workbook audio -- their loaders now tag each
+        # returned item with "_issue"; this tracks that value so
+        # _category_dest_dir() can give each month's issue its own
+        # subfolder instead of piling every month ever downloaded into
+        # one shared, undifferentiated folder.
+        self._current_audio_issue_label = None
+        # v26.07.30.26 (Kaleb: "meeting workbooks and books in general
+        # -- maybe we should put them into the publications short code
+        # folders?" -- clarified as: keep full titles, but add Books/
+        # Brochures/Tracts as a folder level above the title, matching
+        # the real Publications > Books > <title> navigation depth
+        # instead of every title sitting flat directly under
+        # Publications). Tracks the real category (jw_fetch.
+        # CATEGORY_BOOKS/CATEGORY_BROCHURES/CATEGORY_TRACTS) of the
+        # currently open publication's audio, same override-after-the-
+        # call pattern as the other trackers above.
+        self._current_audio_pub_category_label = None
+        # v26.07.30.16 (Kaleb's request: nest Music/Publications under
+        # Audio): audio_group_index/_pending_audio_group_source mirror
+        # video_series_index/_pending_video_source exactly, for the new
+        # SCREEN_DOWNLOAD_AUDIO_GROUP sub-picker (AUDIO_SOURCES entries
+        # marked "subcategories": [...] -- "Music" and "Publications").
+        # dl_audio_pub_mode is new and has no video equivalent: True
+        # while SCREEN_DOWNLOAD_BROWSE is showing STATIC_PUBLICATIONS-
+        # shaped items (via open_audio_pub_category(), same list_items()
+        # the EPUB Library browse uses) reached through Publications >
+        # Books/Brochures/Tracts -- selecting an item there fetches ITS
+        # audio track list instead of downloading the EPUB or playing
+        # anything directly. Checked in start_download()'s call site
+        # (the SCREEN_DOWNLOAD_BROWSE "A" handler) BEFORE the generic
+        # dl_is_video/dl_is_audio branches, since items here are neither
+        # (they're still EPUB-shaped, just being used for a different
+        # lookup than normal).
+        self.audio_group_index = 0
+        self._pending_audio_group_source = None
+        self.dl_audio_pub_mode = False
+        # v26.07.30.16: which jw_fetch CATEGORY_* the CURRENT resolved
+        # audio-track list (dl_is_audio=True) came from, if it came via
+        # the new Publications > Books/Brochures/Tracts path -- None for
+        # every other audio entry point (Music, Watchtower Study Audio,
+        # NWT books, Search). The B-back handler needs this specifically
+        # because going back must RE-OPEN that same publication browse
+        # list (open_audio_pub_category()), not just flip .screen -- the
+        # list itself was cleared/replaced by the track-list view.
+        self._audio_pub_return_category = None
 
         self.status_msg = None   # brief on-screen feedback (bookmark saved/
         self.status_until = 0    # updated/limit-reached, delete confirmed, etc.
@@ -8944,6 +7267,18 @@ class App:
         are deliberately left alone, same as that existing cleanup does --
         they're the person's own reading data, not disposable cache; use
         Storage > Clean Up Orphaned Bookmarks if they should go too.
+
+        v26.07.27.32 BUG FIX (found during a requested bug-check):
+        History (Recently Played/Read) predates this docstring's own
+        "scan_library() already handles staleness" claim -- that purge
+        was never extended to cover it, so a deleted book used to leave
+        a permanently-dangling History entry (clicking it later hit
+        open_book()'s generic "not a readable EPUB" failure message
+        instead of ever being cleaned up). purge_recent_book() called
+        here explicitly, same spirit as the existing pin/finished purge,
+        just not reachable through scan_library()'s own mechanism since
+        History isn't keyed by a disk scan the way those are.
+
         Returns True on success."""
         if self._prerender_active and self._book_id == book_id(book["path"]):
             self.cancel_prerender()
@@ -8952,7 +7287,169 @@ class App:
         except OSError as e:
             _boot_log(f"failed to delete book {book['path']}: {e}\n")
             return False
+        purge_recent_book(book.get("relpath"))
+        # v26.07.28.11 BUG FIX (Kaleb's request, bug-check follow-up):
+        # this docstring's own opening claim -- that scan_library()'s
+        # stale-entry purge handles cleanup -- doesn't cover
+        # self.lib_selected, since that set didn't exist when
+        # scan_library()'s purge was written. Left alone, a deleted
+        # book that happened to be selected would stay in the set
+        # forever (until the next folder/filter change clears
+        # everything), inflating the "Selected: N" count with a book
+        # that no longer exists. Explicit discard here, same spirit as
+        # purge_recent_book() right above needing its own explicit call
+        # for the exact same reason.
+        self.lib_selected.discard(book.get("relpath"))
         return True
+
+    def move_book(self, book, dest_folder):
+        """v26.07.27.44 (Kaleb's request: "Move to Folder" -- Library
+        had no way to reorganize an existing book into a different
+        folder without a computer). dest_folder is "" for the Library
+        root, or a relative folder path (any depth) from
+        list_all_library_folders().
+
+        Unlike delete_book(), a move is NOT destructive -- the book
+        still exists, just at a new relpath -- so pinned/finished
+        status and any History entry are explicitly carried over to
+        the new relpath instead of being silently lost (which is
+        exactly what WOULD happen otherwise: both are keyed by
+        relpath, and relpath changes the moment the file moves folders
+        -- confirmed by checking how those sets are actually keyed
+        before writing this, not assumed).
+
+        Returns (True, new_relpath) on success, (False, error_message)
+        on failure. Refuses (without touching anything) if a file with
+        the same name already exists at the destination, rather than
+        silently overwriting someone's other book.
+
+        v26.07.28.01 BUG FIX (Kaleb's request, found during a requested
+        bug-check of Move to Folder): this used to stop at pinned/
+        finished/History and skip two other things ALSO keyed off the
+        old path -- bookmarks/reading position (keyed by full file
+        path, not auto-purged, so they'd silently become unreachable at
+        the old path with nothing pointing at the new one) and the
+        image/anchor/wrap render caches (keyed by book_id(path), a hash
+        of the full path -- would become orphaned dead weight under the
+        old hash while the new path re-decoded from scratch instead of
+        using its existing cache). migrate_book_state() already does
+        exactly this for the OTHER move path in this file (stray-file
+        auto-migration) -- same bookmark/cache logic reused here rather
+        than duplicated, but pinned/finished/History below are left
+        exactly as they already were, since this method is the one
+        source of truth for those three, not migrate_book_state()."""
+        old_relpath = book.get("relpath")
+        old_path = book["path"]
+        filename = book.get("filename") or os.path.basename(old_path)
+        dest_dir = os.path.join(LIBRARY_DIR, dest_folder) if dest_folder else LIBRARY_DIR
+        new_path = os.path.join(dest_dir, filename)
+        new_relpath = os.path.join(dest_folder, filename) if dest_folder else filename
+
+        if os.path.abspath(new_path) == os.path.abspath(old_path):
+            return False, "Already in that folder"
+        if os.path.exists(new_path):
+            return False, f'"{filename}" already exists in that folder'
+
+        if self._prerender_active and self._book_id == book_id(old_path):
+            self.cancel_prerender()
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.move(old_path, new_path)
+        except OSError as e:
+            return False, str(e)
+
+        # v26.07.28.01: bookmarks/reading position (full-path keyed) and
+        # the image/anchor/wrap caches (book_id-hash keyed) -- same
+        # migration migrate_book_state() already does for its own move
+        # path, applied here too now that this is a second place a
+        # book's path can change.
+        bookmarks = load_bookmarks()
+        if old_path in bookmarks:
+            bookmarks[new_path] = bookmarks.pop(old_path)
+            save_bookmarks(bookmarks)
+
+        # v26.07.28.14 (Kaleb's request: "reduce CPU and cache writing"
+        # -- library_cache.json, the title/author/fingerprint metadata
+        # cache scan_library() maintains, used to just get silently
+        # dropped for the old relpath and rebuilt fresh under the new
+        # one on the next scan -- not wrong (nothing stale/orphaned
+        # survived), just wasteful: a real EPUB re-parse for metadata
+        # that hadn't actually changed, PLUS two disk writes instead of
+        # one (scan_library()'s stale-purge write, then a second write
+        # when the fresh entry got created in that same scan). Migrating
+        # here instead means the entry's already sitting under
+        # new_relpath before scan_library() ever runs -- and since
+        # shutil.move() preserves the file's mtime (same filesystem:
+        # os.rename() under the hood; cross-filesystem: shutil's own
+        # copy2 semantics), the fingerprint (size+mtime) still matches,
+        # so scan_library() recognizes it as unchanged and skips BOTH
+        # the re-parse and the write entirely, not just one of them.
+        cache = _load_library_cache()
+        if old_relpath in cache:
+            cache[new_relpath] = cache.pop(old_relpath)
+            _save_library_cache(cache)
+
+        old_id = book_id(old_path)
+        for pattern in (
+            os.path.join(IMG_CACHE_DIR, f"{old_id}__*"),
+            os.path.join(ANCHOR_CACHE_DIR, f"{old_id}.json"),
+            os.path.join(WRAP_CACHE_DIR, f"{old_id}__*"),
+        ):
+            for path in glob.glob(pattern):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+        if old_relpath in self.pinned:
+            self.pinned.discard(old_relpath)
+            self.pinned.add(new_relpath)
+            save_pinned(self.pinned)
+        if old_relpath in self.finished:
+            self.finished.discard(old_relpath)
+            self.finished.add(new_relpath)
+            save_finished(self.finished)
+        # v26.07.28.12 REAL BUG FIX (Kaleb's request: verify bookmarks/
+        # pins/caches migrate correctly on batch move -- caught by
+        # actually testing it instead of just reading the code).
+        # save_pinned()/save_finished() are debounced (up to
+        # PIN_FINISHED_FLUSH_DEBOUNCE_SECONDS = 3s between real disk
+        # writes, Kaleb's own explicit request to cut down on SD card
+        # writes) -- but BOTH callers of move_book() (single-book and
+        # batch) call refresh_library() immediately afterward, which
+        # reloads self.pinned/self.finished straight from DISK via
+        # load_pinned()/load_finished(). If the debounce window hadn't
+        # elapsed, that reload could silently overwrite the migration
+        # above with the stale PRE-migration file contents -- confirmed
+        # by direct test (save immediately followed by a reload came
+        # back empty). flush_pin_finished_now() already existed for
+        # exactly this class of problem (built for quit/book-close) but
+        # was never wired in here. Called unconditionally rather than
+        # only when this particular book's own pin/finished changed --
+        # a batch move touches this same in-RAM state repeatedly in a
+        # tight loop, so forcing a real write after EVERY item is the
+        # only way to guarantee refresh_library() (called once, after
+        # the whole loop) never races an unflushed pending write from
+        # any of them.
+        flush_pin_finished_now()
+        # v26.07.28.11 BUG FIX (Kaleb's request, bug-check follow-up):
+        # same class of gap as the bookmark/cache migration above --
+        # this used to leave a STALE relpath sitting in self.lib_selected
+        # after a single-book move (batch-move already clears the whole
+        # selection on success, so this only matters for the single-book
+        # fallback path). Not just cosmetic: a stale entry inflates the
+        # "Selected: N" count shown on screen, and would silently get
+        # skipped over (not crash, but also not do anything useful) if
+        # a later batch move tried to resolve it. Migrated the same way
+        # pinned/finished are, right above, rather than just discarded --
+        # a book being selected shouldn't stop being selected just
+        # because it moved.
+        if old_relpath in self.lib_selected:
+            self.lib_selected.discard(old_relpath)
+            self.lib_selected.add(new_relpath)
+        update_recent_book_relpath(old_relpath, new_relpath)
+
+        return True, new_relpath
 
     def refresh_library(self):
         self._all_books = scan_library()  # may purge stale pin entries for deleted books on disk
@@ -8967,14 +7464,57 @@ class App:
         action that can change filter membership, sort mode, or pin/
         finished status must go through this instead of re-sorting
         self.books directly, or a change made while a filter is active
-        would silently sort/re-add books that shouldn't be visible."""
+        would silently sort/re-add books that shouldn't be visible.
+
+        v26.07.27.43 (Kaleb's request: real folder navigation, like a
+        file manager, instead of one flat list with a "-- FolderName"
+        text label).
+
+        v26.07.28.02 BUG FIX (Kaleb's report: switching Sort mode while
+        browsing a folder read as "sort modes are broken" -- turned out
+        real folder-scoping was applying unconditionally to every
+        filter/sort combination, not just when he actually wanted to
+        browse folders). Folder-scoping and the subfolder-row scan
+        below now ONLY happen when Filter is explicitly set to
+        "folders" -- every other filter (All/Unfinished/Finished/
+        Pinned) shows the flat whole-library list across every sort
+        mode, same as before real folder navigation existed.
+        self.lib_subfolders is scanned from the REAL filesystem, not
+        derived from book folder fields -- an empty subfolder (no
+        books in it yet) still needs to show up as navigable, which a
+        book-derived list could never reveal."""
         if self.lib_filter_mode == "finished":
             filtered = [b for b in self._all_books if b["relpath"] in self.finished]
         elif self.lib_filter_mode == "unfinished":
             filtered = [b for b in self._all_books if b["relpath"] not in self.finished]
+        elif self.lib_filter_mode == "pinned":
+            # v26.07.27.25 (Kaleb's request, added alongside the SELECT
+            # hotkey change: "filter seems sparse... pinned only?").
+            # self.pinned is already the same live in-RAM set toggle_pin()
+            # maintains -- same pattern as the finished/unfinished
+            # branches above, just against a different membership set.
+            filtered = [b for b in self._all_books if b["relpath"] in self.pinned]
         else:
+            # v26.07.28.02: this also covers "folders" -- Folders shows
+            # every book in the current folder regardless of finished
+            # status, same "no exclusion" base All already used.
             filtered = self._all_books
+
+        if self.lib_filter_mode == "folders":
+            filtered = [b for b in filtered if (b.get("folder") or "") == self.lib_current_folder]
+            real_dir = os.path.join(LIBRARY_DIR, self.lib_current_folder) if self.lib_current_folder else LIBRARY_DIR
+            try:
+                self.lib_subfolders = sorted(
+                    name for name in os.listdir(real_dir)
+                    if os.path.isdir(os.path.join(real_dir, name)) and not name.startswith(".")
+                )
+            except OSError:
+                self.lib_subfolders = []
+        else:
+            self.lib_subfolders = []
+
         self.books = sort_library(filtered, self.lib_sort_mode, self.pinned)
+
 
     # -------- generic text entry (v0.1.30) --------
     def open_text_entry(self, prompt, initial_value, on_confirm, return_screen, on_validate=None, hint="", autocap=False):
@@ -9291,6 +7831,9 @@ class App:
         or care which specific loader populated the list."""
         self.dl_plugin = JW_PLUGIN
         self.dl_is_video = True
+        self.dl_audio_pub_mode = False  # v26.07.30.16: defensive reset,
+                                          # same reasoning as the audio
+                                          # opener's own reset
         self.dl_category = None
         self.dl_items = []
         self.dl_index = 0
@@ -9359,6 +7902,48 @@ class App:
         download_audio() instead of find_movies_dir()/download_video()."""
         self.dl_plugin = JW_PLUGIN
         self.dl_is_audio = True
+        self.dl_audio_pub_mode = False  # v26.07.30.16: this is the
+                                          # RESOLVED-tracks screen, not
+                                          # the publications-lookup one
+                                          # that leads here -- explicit
+                                          # reset so a stale True from
+                                          # the Publications leg can't
+                                          # leak into normal audio
+                                          # playback/download handling.
+        self._audio_pub_return_category = None  # v26.07.30.16: default
+                                          # "not from Publications" --
+                                          # the ONE call site that IS
+                                          # (the SCREEN_DOWNLOAD_BROWSE
+                                          # dl_audio_pub_mode "A" handler)
+                                          # sets the real value right
+                                          # after calling this method.
+        self._current_audio_book_label = None  # v26.07.30.24: default
+                                          # "not a Bible book" -- the
+                                          # ONE call site that IS (the
+                                          # SCREEN_DOWNLOAD_AUDIO_BOOKS
+                                          # "A" handler) sets the real
+                                          # book name right after
+                                          # calling this method, same
+                                          # override pattern as
+                                          # _audio_pub_return_category
+                                          # just above.
+        self._current_audio_issue_label = None  # v26.07.30.25: default
+                                          # "no issue" -- set right
+                                          # after this call, in the
+                                          # SCREEN_DOWNLOAD_AUDIO_GROUP
+                                          # "A" handler, whenever the
+                                          # loader tagged its items
+                                          # with "_issue" (Watchtower
+                                          # Study/Meeting Workbook
+                                          # audio only).
+        self._current_audio_pub_category_label = None  # v26.07.30.26:
+                                          # default "not a publication
+                                          # picked from Books/Brochures/
+                                          # Tracts" -- set right after
+                                          # this call, in the
+                                          # SCREEN_DOWNLOAD_BROWSE
+                                          # dl_audio_pub_mode "A"
+                                          # handler.
         self.dl_category = None
         self.dl_items = []
         self.dl_index = 0
@@ -9393,6 +7978,69 @@ class App:
                 self.dl_load_error = err
                 self.dl_index = 0
                 self.dl_loading = False
+                # v26.07.30.25 BUG FIX (caught before shipping by
+                # tracing through the actual async load path, not just
+                # writing the check and assuming it'd work): this used
+                # to be set right after the OUTER call to open_plugin_
+                # audio_list() returned -- but that call only STARTS
+                # this background thread, it doesn't wait for it, so
+                # dl_items was still the freshly-reset empty list at
+                # that point almost every time. Moved here, where
+                # dl_items is actually populated for real.
+                if items and items[0].get("_issue"):
+                    self._current_audio_issue_label = items[0]["_issue"]
+                self.dirty = True
+
+        threading.Thread(target=_do_load, daemon=True).start()
+
+    def open_audio_issue_picker(self, source):
+        """v26.07.30.28 (Kaleb: "did we implement the full backlog of
+        watchtowers and awakes and study issues too just like epub?
+        but the audio?"). Fetches the back-issue list for an
+        AUDIO_SOURCES entry marked "issues": True (Watchtower Study/
+        Meeting Workbook audio) via its "issue_loader" -- async, same
+        dl_loading pattern as everywhere else, since building the list
+        needs a live RSS check (see list_watchtower_audio_issues()/
+        list_mwb_audio_issues()'s own docstrings). Populates
+        self._dl_audio_issue_list with (issue, display_label) pairs and
+        moves to SCREEN_DOWNLOAD_AUDIO_ISSUES once loaded."""
+        self._pending_audio_source = source
+        self._dl_audio_issue_list = []
+        self.audio_issue_index = 0
+        self.dl_loading = True
+        self.dl_loading_start = time.time()
+        self.dl_load_error = None
+        self.screen = SCREEN_DOWNLOAD_AUDIO_ISSUES
+
+        def _do_load():
+            try:
+                loader = getattr(JW_PLUGIN, source["issue_loader"])
+                issues = loader()
+            except Exception as e:
+                issues, err = [], str(e)
+            else:
+                err = None if issues else "No issues found"
+            # v26.07.30.29 BUG FIX (found by deliberately testing the
+            # quick menu opened mid-load, not waiting for a real report):
+            # the original guard required self.screen ==
+            # SCREEN_DOWNLOAD_AUDIO_ISSUES, but opening the quick menu
+            # (X) changes self.screen to SCREEN_DOWNLOAD_QUICK_MENU on
+            # TOP of this screen -- a temporary overlay, not actually
+            # leaving the flow. That made the guard fail for a
+            # completely legitimate completion: dl_loading got stuck
+            # True forever, and the real fetched issue list was
+            # silently discarded, confirmed live. Screen equality
+            # dropped entirely -- source identity alone (added in
+            # v26.07.30.28 for the cross-source race) already
+            # correctly distinguishes "still the same intended
+            # request" from "person moved on to a genuinely different
+            # source" without also being fooled by a modal overlay
+            # temporarily sitting on top.
+            if self._pending_audio_source is source:
+                self._dl_audio_issue_list = issues
+                self.dl_load_error = err
+                self.audio_issue_index = 0
+                self.dl_loading = False
                 self.dirty = True
 
         threading.Thread(target=_do_load, daemon=True).start()
@@ -9421,6 +8069,37 @@ class App:
         jw_fetch.CATEGORIES) -- same loading pattern as open_downloader()."""
         self.dl_category = category
         self.dl_is_video = False  # v0.1.90: this is the EPUB browse path
+        self.dl_audio_pub_mode = False  # v26.07.30.16: this path is
+                                          # never the audio-publications
+                                          # lookup mode -- explicit reset
+                                          # so a stale True can't leak in
+                                          # from a prior Publications visit
+        self.dl_items = []
+        self.dl_index = 0
+        self.dl_page = 1
+        self.dl_query = None
+        self.dl_has_next = False
+        self.dl_load_error = None
+        self.screen = SCREEN_DOWNLOAD_BROWSE
+        self._load_dl_page()
+
+    def open_audio_pub_category(self, category):
+        """v26.07.30.16 (Kaleb's request: nest audiobook versions of
+        publications under Audio > Publications > Books/Brochures/
+        Tracts). Browses the SAME STATIC_PUBLICATIONS-backed catalog
+        the normal EPUB Library browse uses (jw_fetch.list_items(
+        category=X) -- one shared source of truth, not a second
+        hardcoded list to keep in sync with the real one) but in
+        audio-lookup mode: selecting an item here calls list_audio_
+        items() for THAT title instead of downloading its EPUB. Item
+        SHAPE is identical to the normal EPUB browse (title/subtitle/
+        _pub/_extra), so this reuses _load_dl_page() exactly as-is --
+        only what "A" does with the eventual selection differs,
+        gated by dl_audio_pub_mode."""
+        self.dl_category = category
+        self.dl_is_video = False
+        self.dl_is_audio = False
+        self.dl_audio_pub_mode = True
         self.dl_items = []
         self.dl_index = 0
         self.dl_page = 1
@@ -9449,6 +8128,14 @@ class App:
         page = self.dl_page
         query = self.dl_query
         category = self.dl_category
+        audio_pub_mode = self.dl_audio_pub_mode  # v26.07.30.17: captured
+                                          # in the closure like the other
+                                          # loop variables above, so the
+                                          # background thread filters
+                                          # against whatever mode was
+                                          # active WHEN LOADING STARTED,
+                                          # not whatever it is by the
+                                          # time the thread finishes.
         self.dl_loading = True
         self.dl_loading_start = time.time()
         self.dl_load_error = None
@@ -9459,6 +8146,19 @@ class App:
                     items, has_next, err = plugin.list_items(query=query, page=page, category=category)
                 else:
                     items, has_next, err = plugin.list_items(query=query, page=page)
+                if audio_pub_mode and not err:
+                    # v26.07.30.17 (Kaleb: "any categories that don't
+                    # have audio just be sure to omit them from
+                    # showing"): filter down to only titles confirmed
+                    # to have real audio, so nothing in this list fails
+                    # after the fact. filter_items_with_audio() is a
+                    # getattr-gated optional hook -- an older jw_fetch.py
+                    # build without it just skips filtering (same
+                    # graceful-degradation pattern as every other
+                    # optional plugin feature check in this file).
+                    filter_fn = getattr(plugin, "filter_items_with_audio", None)
+                    if filter_fn:
+                        items = filter_fn(items)
             except Exception as e:
                 items, has_next, err = [], False, str(e)
             # Guard against a stale response landing after the person
@@ -9495,6 +8195,84 @@ class App:
         self.dl_page -= 1
         self._load_dl_page()
 
+    def _wifi_ok_or_warn(self):
+        """v26.07.27.30 (Kaleb's request: "nudge" the person toward
+        muOS's own Network settings instead of silently attempting a
+        download/stream/search that's just going to fail or sit for the
+        full 15s timeout with no WiFi at all). Live-reads WiFi status
+        fresh right now (_read_wifi_status() is a cheap sysfs check, not
+        a network round-trip -- safe to call on demand like this,
+        unlike the cached app._status_wifi_connected the status-bar icon
+        uses, which only refreshes periodically and could be stale by
+        the exact moment a person presses Download).
+
+        Returns True if it's fine to proceed -- includes both an actual
+        confirmed connection AND None (no WiFi interface detected at
+        all, e.g. off-device testing) -- deliberately NOT blocking on
+        None, since that's "can't tell", not "confirmed disconnected",
+        and a false block would be worse than an occasional real
+        attempt that fails with its own normal network-error message
+        instead. Only a confirmed False (a real interface exists but
+        isn't connected) shows the nudge and returns False so the
+        caller aborts before ever starting a network operation.
+        """
+        if _read_wifi_status() is False:
+            self.set_status("WiFi not connected -- connect via muOS Network settings")
+            return False
+        return True
+
+    def _storage_ok_or_warn(self, needed_bytes=0, dest_dir=None):
+        """v26.07.27.33 (Kaleb's request, QoL follow-up: same "nudge"
+        idea as _wifi_ok_or_warn(), for low storage before a download
+        instead of letting it fail partway through with the SD card
+        nearly full). Live-reads free space via os.statvfs right now --
+        cheap, not worth caching, same reasoning as the WiFi check not
+        relying on a periodic cached value.
+
+        needed_bytes: the item's real, known download size where one
+        exists -- jw_fetch.py's items carry a genuine "filesize" field
+        (confirmed by checking the plugin source directly, not assumed),
+        so single-item downloads and Download All can both pass an
+        actual figure rather than guessing. Gutenberg items don't carry
+        a size (EPUBs are small enough this rarely matters), so 0 is a
+        perfectly reasonable default there -- the fixed safety margin
+        below still applies regardless.
+
+        dest_dir: the real destination being written to (per-category
+        subfolder for JW downloads, LIBRARY_DIR for books) -- statvfs
+        needs a path that actually EXISTS, so this walks up to the
+        nearest existing parent if dest_dir hasn't been created yet
+        (a fresh category subfolder, for instance), falling back to
+        LIBRARY_DIR if nothing usable is found at all.
+
+        Returns True if there's enough room (needed_bytes plus a fixed
+        20MB safety margin, always applied even when needed_bytes is
+        unknown/0). Only warns and returns False on a genuine shortfall
+        -- never blocks on a statvfs failure itself (permissions, an
+        unusual filesystem, off-device testing), since a false block
+        would be worse than an occasional real attempt that fails with
+        its own normal disk-full error instead."""
+        margin = 20 * 1024 * 1024  # 20MB fixed safety buffer, always applied
+        path = dest_dir or LIBRARY_DIR
+        while path and not os.path.isdir(path):
+            parent = os.path.dirname(path.rstrip(os.sep))
+            if parent == path:
+                path = LIBRARY_DIR
+                break
+            path = parent
+        try:
+            st = os.statvfs(path)
+            free_bytes = st.f_bavail * st.f_frsize
+        except OSError:
+            return True  # can't tell -- same "don't false-block" posture as WiFi's None case
+        required = needed_bytes + margin
+        if free_bytes < required:
+            free_mb = free_bytes / (1024 * 1024)
+            self.set_status(f"Low storage ({free_mb:.0f}MB free) -- free up space before downloading",
+                             duration=4.0)
+            return False
+        return True
+
     def start_download(self, idx):
         if self._dl_downloading_idx is not None or self._dl_all_running:
             # v26.07.23.02 BUG FIX (found during Download All testing):
@@ -9506,10 +8284,20 @@ class App:
             # against for two single downloads. Now both download paths
             # share one "only one at a time" rule.
             return  # one at a time -- avoid overlapping writes/status races
+        if not self._wifi_ok_or_warn():
+            return
         if idx < 0 or idx >= len(self.dl_items):
             return
         item = self.dl_items[idx]
         plugin = self.dl_plugin
+        if self.dl_is_video:
+            _dest_for_check = self._category_dest_dir(True)
+        elif self.dl_is_audio:
+            _dest_for_check = self._category_dest_dir(False)
+        else:
+            _dest_for_check = LIBRARY_DIR
+        if not self._storage_ok_or_warn(item.get("filesize", 0), _dest_for_check):
+            return
         self._dl_downloading_idx = idx
 
         if self.dl_is_video:
@@ -9567,6 +8355,14 @@ class App:
                     stray = find_existing_file_elsewhere(
                         video_item["filename"], movies_dir, JW_PLUGIN.find_movies_dir())
                     if stray:
+                        # v26.07.30.31: if this stray copy is sitting in
+                        # an old flat folder, move it into the correct
+                        # structure now instead of just leaving it there
+                        # -- exactly the moment a duplicate download
+                        # would otherwise happen, so this can never
+                        # itself create one.
+                        stray = _migrate_stray_if_flat(stray, movies_dir, JW_PLUGIN.find_movies_dir(),
+                                                        JW_PLUGIN.classify_video_folder)
                         ok, msg, _path = True, f'"{item["title"]}" already downloaded (found in a different category)', stray
                         found_elsewhere = True
                     else:
@@ -9623,6 +8419,11 @@ class App:
                     stray = find_existing_file_elsewhere(
                         audio_item["filename"], music_dir, JW_PLUGIN.find_music_dir())
                     if stray:
+                        # v26.07.30.31: same passive migration as the
+                        # video branch above -- see _migrate_stray_if_
+                        # flat()'s own docstring for the full reasoning.
+                        stray = _migrate_stray_if_flat(stray, music_dir, JW_PLUGIN.find_music_dir(),
+                                                        JW_PLUGIN.classify_audio_folder)
                         ok, msg, _path = True, f'"{item["title"]}" already downloaded (found in a different category)', stray
                         found_elsewhere = True
                     else:
@@ -9832,6 +8633,27 @@ class App:
         both muOS's native player AND jw_fetch.py's own offline
         fallback can see what's already downloaded, grouped sensibly).
 
+        v26.07.30.22 (Kaleb's request: "so that we don't mix up what
+        we have made vs regular music from other apps" + make the
+        on-disk structure mirror the real Music/Publications grouping
+        this session added to the UI). AUDIO downloads nest one level
+        deeper: base_dir/<PLUGIN_NAME>/<group>/<leaf label> -- e.g.
+        ROMS/Music/JW.org/Music/Original Songs or ROMS/Music/JW.org/
+        Publications/Draw Close to Jehovah. PLUGIN_NAME is read
+        dynamically (not hardcoded "JW.org") so a future plugin with
+        its own audio (e.g. Gutenberg) gets its own top folder
+        automatically, no new code needed here.
+
+        v26.07.30.23 (Kaleb's follow-up: "what about videos done the
+        same?"): VIDEO gets the same PLUGIN_NAME wrapper for the same
+        "don't mix with other apps' regular videos" reasoning --
+        base_dir/<PLUGIN_NAME>/<leaf label>. No extra grouping tier
+        needed here the way audio has Music/Publications -- video's
+        own top-level categories (JW Broadcasting, Dramas, Series,
+        etc.) are all peers with no natural supergroup to nest under,
+        so a single PLUGIN_NAME wrapper is the right parallel, not a
+        forced second level.
+
         Returns the full destination directory for whatever's
         currently open on SCREEN_DOWNLOAD_BROWSE: base_dir/category
         if a source is tracked (_current_video_source/
@@ -9847,9 +8669,48 @@ class App:
         base_dir = JW_PLUGIN.find_movies_dir() if is_video else JW_PLUGIN.find_music_dir()
         source = self._current_video_source if is_video else self._current_audio_source
         label = (source or {}).get("label")
-        if not label:
-            return base_dir
-        return os.path.join(base_dir, JW_PLUGIN.sanitize_folder_name(label))
+        plugin_name = getattr(JW_PLUGIN, "PLUGIN_NAME", None)
+        if is_video:
+            parts = [base_dir]
+            if plugin_name:
+                parts.append(JW_PLUGIN.sanitize_folder_name(plugin_name))
+            if label:
+                parts.append(JW_PLUGIN.sanitize_folder_name(label))
+            return os.path.join(*parts)
+        parts = [base_dir]
+        if plugin_name:
+            parts.append(JW_PLUGIN.sanitize_folder_name(plugin_name))
+        group_label = self._current_audio_group_label
+        if group_label:
+            parts.append(JW_PLUGIN.sanitize_folder_name(group_label))
+        # v26.07.30.26: Books/Brochures and Booklets/Tracts, nested
+        # between "Publications" and the individual title, matching
+        # the real Publications > Books > <title> navigation depth --
+        # e.g. .../Publications/Books/Walk Courageously With God/
+        # instead of every title sitting flat directly under
+        # Publications regardless of which category it came from.
+        pub_category_label = self._current_audio_pub_category_label
+        if pub_category_label:
+            parts.append(JW_PLUGIN.sanitize_folder_name(pub_category_label))
+        if label:
+            parts.append(JW_PLUGIN.sanitize_folder_name(label))
+        # v26.07.30.24: Bible book (if any) gets its OWN subfolder,
+        # nested one level deeper than the Bible-edition label above --
+        # e.g. .../Bible Reading Audio (NWT)/Genesis/ vs .../Exodus/.
+        # Without this, every book's same-numbered chapter files (every
+        # book's chapter 1 is literally "Chapter 1.mp3") collided in one
+        # shared folder and silently overwrote each other.
+        book_label = self._current_audio_book_label
+        if book_label:
+            parts.append(JW_PLUGIN.sanitize_folder_name(book_label))
+        # v26.07.30.25: same idea, one level deeper, for Watchtower
+        # Study/Meeting Workbook audio -- each month's issue gets its
+        # own subfolder instead of every month ever downloaded piling
+        # into one shared "Watchtower Study Audio (This Week)" folder.
+        issue_label = self._current_audio_issue_label
+        if issue_label:
+            parts.append(JW_PLUGIN.sanitize_folder_name(issue_label))
+        return os.path.join(*parts)
 
     def _resolve_media_source(self, item, is_video):
         """v26.07.21.39 (Kaleb's request: "if we download the songs or
@@ -9866,7 +8727,16 @@ class App:
         this existed. Used by every play_*_item()/play_*_queue_from()
         method below, both single-item and full-queue playback, so
         "prefer the downloaded copy" is consistent everywhere rather
-        than only some entry points."""
+        than only some entry points.
+
+        v26.07.30.22/v26.07.30.23: also falls back to checking the OLD
+        flat pre-nesting path (base_dir/leaf_label/filename, no
+        PLUGIN_NAME wrapper, and for audio no group either) if the new
+        nested path doesn't have it -- media downloaded before these
+        two folder restructurings stays recognized as already-local
+        instead of looking "missing" and re-streaming/re-downloading
+        unnecessarily. One-time transitional fallback, not a permanent
+        second location new downloads ever use."""
         filename = item.get("filename")
         if filename and native_video is not None:
             try:
@@ -9874,6 +8744,14 @@ class App:
                 local_path = os.path.join(dest_dir, os.path.basename(filename))
                 if os.path.isfile(local_path):
                     return local_path, True
+                base_dir = JW_PLUGIN.find_movies_dir() if is_video else JW_PLUGIN.find_music_dir()
+                source = self._current_video_source if is_video else self._current_audio_source
+                label = (source or {}).get("label")
+                if label:
+                    old_path = os.path.join(base_dir, JW_PLUGIN.sanitize_folder_name(label),
+                                             os.path.basename(filename))
+                    if os.path.isfile(old_path):
+                        return old_path, True
             except Exception:
                 pass  # fall through to streaming -- a broken local-path
                       # check should never block playback entirely
@@ -9925,6 +8803,8 @@ class App:
         if is_local:
             url = local_source
         else:
+            if not self._wifi_ok_or_warn():
+                return
             quality = getattr(self, "video_stream_quality", "480p")
 
             video_item = item
@@ -9959,6 +8839,11 @@ class App:
                 self.set_status("Video source isn't a recognized JW.org URL", duration=4.0)
                 return
 
+        # v26.07.27.31 (Kaleb's request): recorded here, after a valid
+        # source (local or streamable URL) is confirmed -- not earlier,
+        # so a resolve failure above never adds a broken entry.
+        record_recent("video", item["title"], item=item)
+
         self.set_status(f'{"Playing" if is_local else "Streaming"} "{item["title"]}"...', duration=3.0)
         self.dirty = True
         # v26.07.20.10 BUG FIX (Kaleb's real on-device report: while the
@@ -9991,17 +8876,36 @@ class App:
         native_video.maybe_trim_memory(self._clear_text_texture_cache)
         ok, msg = native_video.play_jw_video(
             url, is_local=is_local, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B,
-            # v26.07.21.24 (Kaleb's request, remapped from v26.07.20.35):
-            # L1/R1 -> +-1min seek, L2/R2 -> +-10min skip -- see
-            # native_video.py's own comment on _translate_loop for the
-            # full current layout, including D-pad Up/Down title-OSD
-            # toggle/mute (v26.07.24.03; was brightness, see that
-            # entry's own comment for why it never worked here).
+            # v26.07.27.01: L1/R1/L2/R2 and D-pad Left/Right/Up/Down --
+            # see native_video.py's _translate_loop docstring for the
+            # full current control scheme (real mpv/ffplay default
+            # keys throughout, mode-aware L2/R2).
             joy_l1=JOY_L, joy_r1=JOY_R, joy_l2=JOY_L2, joy_r2=JOY_R2,
             # v26.07.21.01: Y -> subtitle toggle/cycle (Kaleb's request).
             joy_y=JOY_Y,
-            # v26.07.21.02: X -> audio track cycle (Kaleb's request).
+            # See native_video.py's _translate_loop docstring for X's
+            # current action (mute, as of v26.07.29.08) -- this
+            # comment used to say "audio track cycle" (its v26.07.21.02
+            # original job), long since reassigned twice over.
             joy_x=JOY_X,
+            # v26.07.29.14 BUG FIX (Kaleb's report: "MPV player doesn't
+            # do anything on video modes now with start or select. It
+            # doesn't show the Playback location and select doesn't
+            # show format or anything"): joy_start/joy_select were
+            # never passed on THIS call site -- play_video_queue_from()
+            # (Play All/Shuffle All) got them correctly, but this single-
+            # video path (the one actually used when opening one video
+            # directly, the common case) was missed, so native_video's
+            # _translate_loop received joy_start=None/joy_select=None
+            # here and its `if joy_start is not None`/`if joy_select is
+            # not None` guards silently never fired -- START/SELECT
+            # produced no key tap at all, not a wrong one, hence "does
+            # nothing" rather than a visibly incorrect toggle. Same
+            # JOY_START/JOY_BACK constants already used by every other
+            # working call site (JOY_BACK is this app's established
+            # physical button for logical SELECT everywhere, not a typo
+            # -- see JOY_BACK's own module-level comment).
+            joy_start=JOY_START, joy_select=JOY_BACK,
             # v26.07.20.38: manual player override, see App.__init__'s
             # own comment on this setting.
             player_pref=self.video_player_pref,
@@ -10059,6 +8963,8 @@ class App:
         if not self.dl_items:
             self.set_status("Nothing to play", duration=3.0)
             return
+        if not self._wifi_ok_or_warn():
+            return
 
         def _on_track_change(item, pos, total):
             # v26.07.24.01 BUG FIX (Kaleb's real on-device report:
@@ -10076,27 +8982,55 @@ class App:
             # and whichever buffer the display flips to next is
             # effectively random, producing exactly this alternating/
             # torn "text bleeding through video" glitch between queue
-            # items. Unlike the existing blank-screen double-clears,
-            # this screen has real content to show, not black -- so the
-            # fix is to draw AND present this same card TWICE (not
-            # clear-blank twice), guaranteeing both buffers hold the
-            # identical, correct frame before play_jw_video() blocks on
-            # the next item.
+            # items.
+            #
+            # v26.07.27.19 REAL BUG FIX (Kaleb's follow-up: "MPV glitches
+            # with the text showing up when doing shuffle still... it
+            # doesn't go totally black first"). Root cause found by
+            # re-reading play_video_item()'s own proven-working post-
+            # playback sequence: the blank double-clear ALONE was never
+            # actually enough there either (see _nudge_window_after_
+            # video()'s own docstring -- confirmed on real hardware via
+            # Kaleb's ffplay.log, "the leftover isn't in PicoReader's own
+            # render buffer" at all) -- that function's framebuffer
+            # blank/unblank plus a real 0.5s wait (CTupe's own proven
+            # number, github.com/nvcuong1312/YtMuos) is the piece that
+            # actually fixed it, and THIS callback never called it, only
+            # the SDL-level double-clear below. Calling it now, FIRST,
+            # before the double-clear -- it needs to run once per
+            # transition, not once at the very end of the whole queue
+            # (its old only call site, main.py's own end-of-
+            # play_video_queue_from cleanup, stays as a final safety net
+            # after the last track too).
+            # v26.07.28.07 REAL FIX (Kaleb's request, following the
+            # "mali" driver research above: apply audio's already-proven
+            # fix here instead of another leftover-frame workaround).
+            # This callback used to draw its own "Shuffle All (2/2)
+            # <title>" text card here (the two-loop block this comment
+            # replaces) -- a second SDL-drawn overlay that was ALWAYS
+            # going to be vulnerable to the exact same cross-layer
+            # leftover-frame problem the video itself has, no matter how
+            # many clears/nudges surrounded it, since the diagnosis
+            # confirmed the leftover isn't in anything PicoReader's own
+            # renderer controls. Audio solved this the same way: don't
+            # fight the other layer, don't draw on it at all. Dropped
+            # the whole card, matching play_audio_queue_from's own
+            # _on_track_change exactly -- native_video.play_video_queue()
+            # now hands mpv the same title via --osd-playing-msg (see
+            # play_jw_video()'s own docstring on osd_title), which mpv
+            # draws INSIDE its own playback surface, the same layer the
+            # video itself is on, so there's no second layer left to
+            # glitch. Silently shows nothing on the (now rare, ffplay-
+            # only) fallback path, same accepted tradeoff audio already
+            # made -- ffplay has no on-screen text capability at all.
+            self._nudge_window_after_video()
             for _ in range(2):
                 SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
                 SDL.SDL_RenderClear(self.renderer)
-                label = "Shuffle All" if shuffle else "Play All"
-                render_text(self.renderer, self.fonts.ui_heading, label, COL_ACCENT,
-                            _sx(24), _sy(24))
-                render_text(self.renderer, self.fonts.ui_body, f"({pos + 1}/{total})", COL_DIM,
-                            _sx(24), _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) + _sy(8))
-                title_y = _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) \
-                    + TTF.TTF_FontHeight(self.fonts.ui_body) + _sy(24)
-                render_text(self.renderer, self.fonts.ui_body, item.get("title", ""), COL_TEXT,
-                            _sx(24), title_y)
-                render_text(self.renderer, self.fonts.ui_small,
-                            "SELECT Next  START Prev  B Stop", COL_DIM,
-                            _sx(24), SH - _sy(hint_height(self.fonts)) + _sy(10))
+                SDL.SDL_RenderPresent(self.renderer)
+            for _ in range(2):
+                SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+                SDL.SDL_RenderClear(self.renderer)
                 SDL.SDL_RenderPresent(self.renderer)
 
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
@@ -10160,6 +9094,13 @@ class App:
         if not is_local and not native_video.is_jw_video_url(url):
             self.set_status("Audio source isn't a recognized JW.org URL", duration=4.0)
             return
+        if not is_local and not self._wifi_ok_or_warn():
+            return
+
+        # v26.07.27.31 (Kaleb's request): recorded here, after a valid
+        # source is confirmed -- same reasoning as play_video_item()'s
+        # own placement.
+        record_recent("audio", item["title"], item=item)
 
         self.set_status(f'{"Playing" if is_local else "Streaming"} "{item["title"]}"...', duration=3.0)
         self.dirty = True
@@ -10185,7 +9126,8 @@ class App:
             ok, msg = native_video.play_audio_file(
                 url, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l=JOY_L, joy_r=JOY_R,
                 player_pref=self.audio_player_pref, is_local=is_local, title=item.get("title"),
-                joy_l2=JOY_L2, joy_r2=JOY_R2)
+                joy_l2=JOY_L2, joy_r2=JOY_R2, joy_y=JOY_Y, joy_x=JOY_X,
+                joy_start=JOY_START, joy_select=JOY_BACK)
         finally:
             native_video.restore_idle_display(_orig_idle_sleep, _orig_idle_display)
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
@@ -10228,8 +9170,20 @@ class App:
         if not self.dl_items:
             self.set_status("Nothing to play", duration=3.0)
             return
+        if not self._wifi_ok_or_warn():
+            return
 
         def _on_track_change(item, pos, total):
+            # v26.07.27.19 (same fix as play_video_queue_from's own
+            # _on_track_change, applied here too for consistency):
+            # _nudge_window_after_video() -- framebuffer blank/unblank
+            # plus the proven 0.5s wait -- was only ever called once at
+            # the very end of the whole queue, never between tracks.
+            # Audio doesn't show a text card to visibly glitch (see this
+            # function's own docstring), but album art renders through
+            # the same mpv/ffplay display path video does, so the same
+            # leftover-frame mechanism could still apply there.
+            self._nudge_window_after_video()
             SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
             SDL.SDL_RenderClear(self.renderer)
             SDL.SDL_RenderPresent(self.renderer)
@@ -10245,7 +9199,8 @@ class App:
             sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l=JOY_L, joy_r=JOY_R,
             player_pref=self.audio_player_pref, on_track_change=_on_track_change,
             resolve_source=lambda item: self._resolve_media_source(item, is_video=False),
-            joy_l2=JOY_L2, joy_r2=JOY_R2)
+            joy_l2=JOY_L2, joy_r2=JOY_R2, joy_y=JOY_Y, joy_x=JOY_X,
+            joy_start=JOY_START, joy_select=JOY_BACK)
         SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
         SDL.SDL_RenderClear(self.renderer)
         SDL.SDL_RenderPresent(self.renderer)
@@ -10285,6 +9240,18 @@ class App:
             return  # one download path at a time, same rule as start_download()
         items = list(self.dl_items)
         if not items:
+            return
+        if not self._wifi_ok_or_warn():
+            return
+        # v26.07.27.33: sums EVERY item's filesize, not just the ones
+        # still missing locally -- download_audio()'s own "already
+        # downloaded" skip (checked per-file, on the background thread)
+        # isn't available to check from here without duplicating that
+        # logic, so this errs toward requiring MORE free space than
+        # strictly necessary rather than less -- the safe direction for
+        # a warning like this to be wrong in.
+        _total_needed = sum(it.get("filesize", 0) for it in items)
+        if not self._storage_ok_or_warn(_total_needed, self._category_dest_dir(False)):
             return
         # v26.07.23.19 BUG FIX (found checking "main thread or background
         # thread issues" -- Kaleb's own request to re-audit): music_dir
@@ -10344,6 +9311,11 @@ class App:
                     stray = find_existing_file_elsewhere(
                         audio_item["filename"], music_dir, JW_PLUGIN.find_music_dir())
                     if stray:
+                        # v26.07.30.31: same passive migration as
+                        # start_download()'s single-item path -- see
+                        # _migrate_stray_if_flat()'s own docstring.
+                        stray = _migrate_stray_if_flat(stray, music_dir, JW_PLUGIN.find_music_dir(),
+                                                        JW_PLUGIN.classify_audio_folder)
                         # v26.07.23.22 BUG FIX (found during this same
                         # feature's own follow-up sweep): this used to
                         # set ok=True, which the done/skipped/failed
@@ -10433,6 +9405,13 @@ class App:
         self.lib_filter_mode = LIBRARY_FILTER_MODES[(idx + 1) % len(LIBRARY_FILTER_MODES)]
         self._apply_library_view()
         self.lib_index = 0
+        # v26.07.28.10: same reasoning as the folder-enter/exit clears
+        # in handle_button() -- Filter changing means a fundamentally
+        # different book list is now showing, so a stale multi-select
+        # from before shouldn't silently carry into it. Covers this
+        # both via SELECT's hotkey and the Library Menu's own
+        # "Filter: Cycle" row, since both call this same method.
+        self.lib_selected.clear()
 
     def toggle_pin(self, book):
         # v26.07.23.05: was book["filename"] (bare basename) -- collides
@@ -10447,10 +9426,28 @@ class App:
         save_pinned(self.pinned)
         selected_path = book["path"]
         self._apply_library_view()
-        # keep the selection on the same book after the re-sort moves it
+        # v26.07.28.08 BUG FIX (Kaleb's question about pin behavior
+        # surfaced this): this loop restores lib_index by searching
+        # self.books alone and assigning the result directly -- correct
+        # for every filter EXCEPT Folders, where lib_index is a COMBINED
+        # index -- see _selected_book()'s own comment in handle_button()
+        # for the current three-segment layout (pinned books, then
+        # subfolder rows, then everything else).
+        # v26.07.28.09 UPDATE (same bug-check that found pinned showing
+        # below subfolders on screen): now that subfolder rows sit
+        # BETWEEN the pinned and unpinned book segments instead of
+        # always first, sort_library() already guarantees self.books'
+        # own first n_pinned entries are the pinned ones in order -- so
+        # a pinned book's position `i` within self.books directly IS
+        # its combined index (no offset), while an unpinned book at
+        # position `i` needs n_subfolders added, same as before.
+        # n_subfolders is 0 for every other filter, so this is a no-op
+        # there -- only Folders was ever affected either way.
+        n_subfolders = len(self.lib_subfolders)
+        n_pinned = sum(1 for b in self.books if b["relpath"] in self.pinned)
         for i, b in enumerate(self.books):
             if b["path"] == selected_path:
-                self.lib_index = i
+                self.lib_index = i if i < n_pinned else i + n_subfolders
                 break
 
     def toggle_finished(self, book):
@@ -10464,17 +9461,40 @@ class App:
         save_finished(self.finished)
         selected_path = book["path"]
         self._apply_library_view()
+        # v26.07.28.08/.09: same three-segment (pinned/folders/rest)
+        # offset fix as toggle_pin() above, same reasoning -- see that
+        # function's own comment for the full explanation.
+        n_subfolders = len(self.lib_subfolders)
+        n_pinned = sum(1 for b in self.books if b["relpath"] in self.pinned)
         # unlike toggle_pin, this can remove the book from view entirely
         # (e.g. marking a book Finished while the Unfinished filter is
         # active) -- fall back to clamping the index instead of leaving
         # lib_index stale/out of range if the book is no longer present.
         for i, b in enumerate(self.books):
             if b["path"] == selected_path:
-                self.lib_index = i
+                self.lib_index = i if i < n_pinned else i + n_subfolders
                 break
         else:
-            self.lib_index = max(0, min(self.lib_index, len(self.books) - 1))
+            self.lib_index = max(0, min(self.lib_index, n_subfolders + len(self.books) - 1))
         self.set_status("Marked Finished" if not was_finished else "Marked Unfinished")
+
+    def clear_recents(self):
+        """v26.07.27.31 (Kaleb's request: a clear-history function IN
+        the History list itself). Same debounced-write path as every
+        other recents mutation (record_recent()) -- not an immediate
+        flush -- matching clear_all_finished()'s own choice to use the
+        regular save_finished() path rather than forcing an unconditional
+        write for what's still just a data-clearing action, not a
+        real quit/book-close checkpoint."""
+        global _RECENTS_DIRTY
+        recents = load_recents()
+        count = len(recents)
+        recents.clear()
+        _RECENTS_DIRTY = True
+        if time.time() - _RECENTS_LAST_FLUSH >= RECENTS_FLUSH_DEBOUNCE_SECONDS:
+            _flush_recents_to_disk()
+        self.recents_index = 0
+        self.set_status(f"Cleared {count} History entr" + ("y" if count == 1 else "ies"))
 
     def clear_all_finished(self):
         """v0.1.122: bulk-clear every Finished mark at once (Kaleb's
@@ -10517,6 +9537,45 @@ class App:
             return
         self.open_book(book)
 
+    def play_recent(self, entry):
+        """v26.07.27.31: dispatches one Recently Played/Read entry back
+        open/playing, by kind. Video/audio reuse play_video_item()/
+        play_audio_item() UNCHANGED -- both only ever touch
+        self.dl_items (confirmed by checking their full bodies, not
+        assumed), so temporarily injecting this single entry as a
+        one-item list and restoring the real list afterward is safe and
+        avoids duplicating all of play_video_item()'s resolve/quality/
+        local-copy logic a second time.
+
+        Known limitation, accepted: _resolve_media_source()'s local-
+        copy check depends on self._current_video_source/
+        _current_audio_source to find the right per-category
+        subfolder -- Recents has no such context, so a video/audio item
+        that WAS downloaded might not be found locally here and could
+        stream instead. Not a failure, just occasionally not the
+        fastest path -- same honest tradeoff already accepted for
+        _wifi_ok_or_warn()'s "can't tell" case rather than engineering
+        around a rare edge for a lot of extra complexity."""
+        kind = entry.get("kind")
+        if kind == "book":
+            relpath = entry.get("relpath")
+            if not relpath:
+                self.set_status("Couldn't reopen this book", duration=3.0)
+                return
+            path = os.path.join(LIBRARY_DIR, relpath)
+            self.open_book({"path": path, "title": entry.get("title", "")})
+        elif kind in ("video", "audio"):
+            item = {k: v for k, v in entry.items() if k not in ("kind", "ts")}
+            saved_items = self.dl_items
+            self.dl_items = [item]
+            try:
+                if kind == "video":
+                    self.play_video_item(0)
+                else:
+                    self.play_audio_item(0)
+            finally:
+                self.dl_items = saved_items
+
     def open_book(self, book):
         if self._prerender_active:
             self.cancel_prerender()
@@ -10552,6 +9611,12 @@ class App:
             self.doc = None
             self.set_status(f'Couldn\'t open "{book["title"]}" -- no readable content found', duration=3.5)
             return
+
+        # v26.07.27.31 (Kaleb's request: Recently Played/Read should
+        # work for EPUBs too, not just video/audio). Recorded here,
+        # right after the spine check passes -- by this point the book
+        # is confirmed genuinely openable, not just attempted.
+        record_recent("book", book["title"], relpath=book.get("relpath"))
 
         last = get_last_position(book["path"])
         if last:
@@ -10656,6 +9721,12 @@ class App:
         # result would be if it did.
         self._bg_wrap_state = None
         self._bg_wrap_href = None
+        # v26.07.27.08 (Feature #2): fast_scroll starts per the
+        # persistent fast_scroll_default setting every time a book
+        # opens -- "always_on" starts it enabled (Y can still turn it
+        # off just for this session), "manual" keeps the original
+        # always-starts-off behavior.
+        self.fast_scroll = (self.fast_scroll_default == "always_on")
 
     def _build_chapter_nav_points(self):
         """Build an ordered list of (spine_index, file, anchor) representing
@@ -11817,6 +10888,16 @@ class App:
         # the MAIN thread for both call sites (play_video_item() always
         # was; the in-book-link path was redesigned to hand off to the
         # main thread too, see App._pending_link_video's own comment).
+        # v26.07.27.39 EXPERIMENT, REVERTED v26.07.27.41 (Kaleb: doubling
+        # to 1.0s didn't fix the transition glitch either -- reverted
+        # back to CTupe's original, proven 0.5s rather than leave an
+        # unhelpful extra half-second of delay on every single video
+        # transition/stop in the app for no benefit). The real driver
+        # turned out to be a vendor-patched "mali" SDL video driver, not
+        # standard KMSDRM as this file's own earlier investigation had
+        # assumed -- confirmed via the new v26.07.27.38 diagnostic log,
+        # which is why a plain timing tweak was worth ruling out
+        # quickly rather than assuming it would help.
         time.sleep(0.5)
 
         # v26.07.20.30/.31 (Kaleb's request, then REVERTED): tried
@@ -14726,6 +13807,22 @@ HINT_BAR_MIN_PAD = 5  # v26.07.13.04: fixed top+bottom padding hint_height()
     # shrinks toward (instead of the old flat HINT_H_BASE*0.35=14px) --
     # see hint_height()'s own comment for why a small fixed pad, not a
     # proportional one, is what actually gains body_rows lines.
+# v26.07.28.23 (Kaleb's request: standardize hint bar / popup sizing
+# across resolutions instead of one-off per-device tweaks). _hint_pt()
+# below already picks the hint bar's font size purely by LINE-COUNT fit
+# at the current Font Size, with zero awareness of the device's actual
+# SH -- fine on the primary 720x720 device, but the SAME absolute pixel
+# height it produces eats a much bigger fraction of a shorter canvas
+# (confirmed by direct measurement: ~17% of a 720px screen vs ~25% of
+# RG34XX-SP's 480px one at max Font Size). This constant and
+# HINT_PT_ABSOLUTE_FLOOR below drive an ADDITIVE step at the end of
+# _hint_pt() that only engages when needed -- a formula off SH itself,
+# not a per-device lookup table, so it scales correctly to any current
+# or future canvas profile automatically.
+HINT_BAR_MAX_SH_FRACTION = 0.20
+HINT_PT_ABSOLUTE_FLOOR = 9  # below _hint_pt()'s existing floor-11 --
+    # only ever reached on a genuinely cramped device at max Font Size;
+    # still comfortably readable, same family/weight as every other pt.
 HINT_H_MAX_LINES = 3  # Absolute ceiling on hint bar lines. In practice the
                        # bar only uses 1-2 (see _hint_lines_needed()) --
                        # this is just the outer bound _hint_pt()'s font-
@@ -14742,7 +13839,13 @@ HINT_H_MAX_LINES = 3  # Absolute ceiling on hint bar lines. In practice the
 # become one if it ever grows further.
 _HINT_CALIBRATION_TEXTS = (
     "D-PAD Scroll  A Follow  SELECT Immersive  B Back  L/R Page  L2/R2 Chap  Y Fast x10  X Menu  START Bookmark",
-    "A Open  X Menu  Y Sort  START Pin  LEFT/RIGHT Jump 10  L/R Font Size  L2 Download  B Quit",
+    # v26.07.28.18: grown to match the Library hint's new worst case
+    # (DOWNLOAD_PLUGINS present, so "L2 Download" AND "R2 Select" both
+    # show) after adding "R2 Select" for multi-select discoverability --
+    # this constant's own rule, right above, is to stay in sync with
+    # whatever the real hint string's longest variant actually is.
+    "A Open  X Menu  Y Sort  SELECT Filter  START Pin  LEFT/RIGHT Jump 10  "
+    "L/R Font Size  L2 Download  R2 Select  B Quit",
     # v26.07.20.05: reader hint with "SELECT Download" swapped in for
     # "SELECT Immersive" -- only ever shown when a JW video link is the
     # current selection (see draw_reader()'s own reader_hint_text
@@ -14916,6 +14019,28 @@ def _hint_pt(fonts, calibration=None):
         if _lines_at(candidate) < lines_at_pt:
             pt = candidate
             break
+
+    # v26.07.28.23 (Kaleb's request: standardize hint bar sizing across
+    # resolutions). Everything above this point is UNCHANGED -- picks
+    # pt purely by line-count fit at the current Font Size, with no
+    # awareness of the device's actual SH. This step shrinks pt FURTHER,
+    # 1pt at a time, only if the resulting hint bar height would exceed
+    # HINT_BAR_MAX_SH_FRACTION of the REAL device screen height --
+    # driven by SH itself, not a per-device table, so it scales to any
+    # canvas profile automatically. Height computed inline (matching
+    # hint_height()'s own formula) rather than calling hint_height()
+    # itself, which calls THIS function -- that would recurse.
+    while pt > HINT_PT_ABSOLUTE_FLOOR:
+        _lines_now = _lines_at(pt)
+        _font_now = fonts._get(pt)
+        if _font_now:
+            _line_h_design_now = (TTF.TTF_FontHeight(_font_now) + _sy(6)) / _SY
+        else:
+            _line_h_design_now = HINT_H_BASE * 0.6
+        _height_now = _line_h_design_now * _lines_now + min(HINT_H_BASE * 0.35, HINT_BAR_MIN_PAD)
+        if _sy(_height_now) <= SH * HINT_BAR_MAX_SH_FRACTION:
+            break
+        pt -= 1
 
     cache[fonts.size_index] = pt
     return pt
@@ -15266,6 +14391,31 @@ STATUS_INDICATORS_W = _sx(96)  # v26.07.21.14: total width reserved in the
                                 # draw_menu()'s own icon placement can't
                                 # drift out of sync with each other.
 
+STATUS_INDICATOR_MAX_PT = 15  # v26.07.29.04 BUG FIX (Kaleb's report,
+    # real on-device: battery%/WiFi bars/clock overlap at large Font
+    # Size). Root cause: pct_text/time_text used fonts.ui_small
+    # directly, which scales the FULL 11pt-28pt Font Size range -- but
+    # every icon dimension and gap around them (icon_row_h, batt_w/h,
+    # bar_w, the 10/20/6px gaps) was a flat pixel constant, tuned once
+    # for a small corner font. At 28pt the text kept growing while the
+    # icons/gaps stayed the same size, so it visibly ran into them.
+    # This corner is fixed-purpose UI chrome (like the app's own logo),
+    # not reading content, so it doesn't need to track body-text Font
+    # Size at all -- capped at a constant 15pt (matches the OLD 18pt-
+    # Font-Size-step's ui_small, the size this corner was originally
+    # tuned and verified against) instead. Still uses min() against the
+    # real ui_small formula so it still SHRINKS at the smaller Font
+    # Size steps (11-14pt) rather than being forced larger than the
+    # rest of the UI there.
+
+
+def _status_indicator_font(fonts):
+    """Fixed-purpose font for the battery%/clock text in the corner
+    status indicators -- see STATUS_INDICATOR_MAX_PT's comment for why
+    this is capped independently of the global Font Size setting."""
+    pt = min(STATUS_INDICATOR_MAX_PT, max(11, fonts.SIZE_STEPS[fonts.size_index] - 4))
+    return fonts._get(pt)
+
 
 def _draw_status_indicators(renderer, app, right_x, top_y):
     """v26.07.21.14 (Kaleb's request): draws the WiFi + battery status
@@ -15291,41 +14441,75 @@ def _draw_status_indicators(renderer, app, right_x, top_y):
     v26.07.21.15 (Kaleb's follow-up): 12-hour clock ("9:41 PM" -- no
     leading zero) drawn on its own row directly underneath the icon
     row, right-aligned to the same `right_x` as the icons above it so
-    the whole corner reads as one aligned block."""
+    the whole corner reads as one aligned block.
+
+    v26.07.29.04 BUG FIX (Kaleb's report): pct_text/time_text now use
+    _status_indicator_font() (a small fixed-purpose font, capped
+    independently of the global reading Font Size -- see that
+    function's comment) instead of fonts.ui_small directly. icon_row_h
+    is now derived from that font's REAL measured height instead of a
+    stale flat _sy(13), so the icon row and the clock row underneath it
+    are always sized to what's actually drawn, at every Font Size step,
+    on every device -- can't drift out of sync the way two independent
+    fixed constants could."""
     x = right_x
-    icon_row_h = _sy(13)
+    _ind_font = _status_indicator_font(app.fonts)
+    icon_row_h = TTF.TTF_FontHeight(_ind_font)
 
     # --- battery (rightmost) ---
     if app._status_battery_pct is not None:
         pct = max(0, min(100, app._status_battery_pct))
-        batt_w, batt_h = _sx(26), _sy(13)
+        batt_w, batt_h = _sx(26), icon_row_h
         nub_w = _sx(3)
         batt_y = top_y
         batt_x = x - batt_w - nub_w
         pct_text = f"{pct}%"
-        pct_font = app.fonts.ui_small
+        pct_font = _ind_font
         pct_w = text_width(pct_font, pct_text)
-        # percent text sits to the LEFT of the icon
+        # v26.07.27.42 BUG FIX (Kaleb's real on-device photo: battery
+        # icon/percent text/WiFi bars read as visually overlapping in
+        # the corner). Measured directly: these gaps were fixed at 6px/
+        # 8px regardless of Font Size -- "84%" grows wider at larger
+        # Font Size settings, but the whitespace around it never did,
+        # so it stayed exactly as tight at every size. Not a negative-
+        # overlap in the math, but tight enough (6px/8px) that real
+        # anti-aliased text against the icon's own outline reads as
+        # touching in practice, exactly as the photo showed. Widened
+        # both gaps for real breathing room.
+        # v26.07.29.04: gaps now safe at every Font Size since pct_font
+        # is capped (see above) rather than growing to 28pt.
         render_text(renderer, pct_font, pct_text, COL_TEXT,
-                    batt_x - pct_w - _sx(6), batt_y - _sy(2))
+                    batt_x - pct_w - _sx(10), batt_y - _sy(2))
         fill_rect(renderer, batt_x, batt_y, batt_w, batt_h, COL_TEXT)
         fill_rect(renderer, batt_x + _sx(2), batt_y + _sy(2),
                   batt_w - _sx(4), batt_h - _sy(4), COL_BG)
         fill_rect(renderer, batt_x + batt_w, batt_y + _sy(3), nub_w, batt_h - _sy(6), COL_TEXT)
-        fill_color = COL_ACCENT if app._status_battery_charging else COL_TEXT
+        # v26.07.27.29 (Kaleb's request): green 50-100%, yellow 30-50%,
+        # red 0-30% when not charging -- charging still overrides to
+        # COL_ACCENT as before (a deliberate, separate signal: "this is
+        # actively charging" matters more than the level it happens to
+        # be at right now).
+        if app._status_battery_charging:
+            fill_color = COL_ACCENT
+        elif pct <= 30:
+            fill_color = COL_BATTERY_RED
+        elif pct <= 50:
+            fill_color = COL_BATTERY_YELLOW
+        else:
+            fill_color = COL_BATTERY_GREEN
         inner_w = batt_w - _sx(6)
         fill_w = max(0, int(inner_w * pct / 100))
         if fill_w > 0:
             fill_rect(renderer, batt_x + _sx(3), batt_y + _sy(3),
                       fill_w, batt_h - _sy(6), fill_color)
-        x = batt_x - pct_w - _sx(14)
+        x = batt_x - pct_w - _sx(20)
 
     # --- wifi (to the left of battery) ---
     if app._status_wifi_connected is not None:
         bars = 3
         bar_gap = _sx(3)
         bar_w = _sx(4)
-        icon_h = _sy(13)
+        icon_h = icon_row_h
         icon_w = bars * bar_w + (bars - 1) * bar_gap
         icon_x = x - icon_w
         icon_y = top_y
@@ -15342,7 +14526,7 @@ def _draw_status_indicators(renderer, app, right_x, top_y):
 
     # --- clock (own row, directly below the icons) ---
     if app._status_time_str:
-        time_font = app.fonts.ui_small
+        time_font = _ind_font
         time_w = text_width(time_font, app._status_time_str)
         time_y = top_y + icon_row_h + _sy(6)
         render_text(renderer, time_font, app._status_time_str, COL_TEXT,
@@ -15942,7 +15126,19 @@ def draw_library(renderer, app):
     # row's selection highlight (confirmed via Kaleb's on-device
     # screenshot). Now spaced using each line's actual font height.
     heading_y = _sy(16)
-    render_text(renderer, app.fonts.ui_heading, "LIBRARY", COL_ACCENT, _sx(20), heading_y)
+    # v26.07.27.43 (Kaleb's request: real folder navigation). Breadcrumb
+    # replaces the plain "LIBRARY" heading once inside a folder, so
+    # there's always a clear answer to "where am I" -- matches how any
+    # real file manager shows its current path.
+    # v26.07.28.02: gated on Filter == "folders" too -- lib_current_folder
+    # is preserved across filter switches, but the breadcrumb should
+    # only show while Folders is actually the active (scoped) view;
+    # every other filter is the flat whole-library list and just says
+    # "LIBRARY" regardless of what folder was last browsed.
+    _in_folders_view = app.lib_filter_mode == "folders" and bool(app.lib_current_folder)
+    heading_text = f"LIBRARY / {app.lib_current_folder.replace(os.sep, ' / ')}" if _in_folders_view else "LIBRARY"
+    render_text(renderer, app.fonts.ui_heading, _fit_text(app.fonts.ui_heading, heading_text, SW - _sx(40)),
+                COL_ACCENT, _sx(20), heading_y)
     # v26.07.09.02: tightened gap under heading (4->2) -- this line was
     # already COL_DIM + ui_small (smallest UI font), i.e. already treated
     # as secondary metadata; the only remaining minimalism tweak was
@@ -15952,6 +15148,14 @@ def draw_library(renderer, app):
     sort_line = f"Sort: {LIBRARY_SORT_LABELS[app.lib_sort_mode]}"
     if app.lib_filter_mode != "all":
         sort_line += f"   Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}"
+    # v26.07.28.10 (Kaleb's request: multi-select for Move to Folder).
+    # An active selection should never be a silent state -- this line
+    # is already the natural place a person glances for "what mode am
+    # I in" (Sort/Filter live here), so a nonzero count goes right
+    # alongside them rather than only showing as the per-row accent
+    # bars, which could be scrolled out of view.
+    if app.lib_selected:
+        sort_line += f"   Selected: {len(app.lib_selected)}"
     render_text(renderer, app.fonts.ui_small, _fit_text(app.fonts.ui_small, sort_line, SW - _sx(40)),
                 COL_DIM, _sx(20), sort_y)
 
@@ -16013,13 +15217,44 @@ def draw_library(renderer, app):
     # Kaleb over the v26.07.09.02 alignment guarantee: titles no longer
     # all start at the same x, but no row wastes space it isn't using.
 
-    start = max(0, app.lib_index - visible // 2)
+    # v26.07.27.43: combined index space -- subfolder rows (real
+    # navigable directories, scanned fresh in _apply_library_view())
+    # alongside book rows in one shared scroll/highlight index.
+    # v26.07.28.09 BUG FIX (Kaleb's report: pinned books were showing
+    # BELOW subfolders in Folders filter -- every other filter already
+    # puts pinned first via sort_library(), but subfolder rows always
+    # drew before ANY book row here, pinned or not). Three segments now,
+    # in order: pinned books [0, n_pinned), subfolders [n_pinned,
+    # n_pinned+n_subfolders), the rest [n_pinned+n_subfolders, total) --
+    # n_pinned is 0 for every other filter, so this whole segment
+    # collapses to a no-op everywhere except Folders. Same
+    # pinned_count already computed above for the old divider line.
+    n_subfolders = len(app.lib_subfolders)
+    n_pinned = pinned_count
+    total_items = n_subfolders + len(app.books)
+    start = max(0, min(app.lib_index - visible // 2, max(0, total_items - visible)))
     for i in range(visible):
-        bi = start + i
-        if bi >= len(app.books):
+        idx = start + i
+        if idx >= total_items:
             break
-        book = app.books[bi]
         y = top + i * row_h
+        if n_pinned <= idx < n_pinned + n_subfolders:
+            # Subfolder row -- a real directory, navigable via A (see
+            # the button handler), not a book. Simple, distinct style
+            # (folder brackets, no icons/suffix machinery) rather than
+            # reusing the book row's full icon-gutter/suffix logic,
+            # which doesn't apply to a folder at all.
+            folder_name = app.lib_subfolders[idx - n_pinned]
+            selected = (idx == app.lib_index)
+            if selected:
+                fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            color = COL_ACCENT if selected else COL_TEXT
+            label = _fit_text(app.fonts.ui_body, f"[ {folder_name} ]", row_max_w)
+            render_text(renderer, app.fonts.ui_body, label, color,
+                        _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+            continue
+        bi = idx if idx < n_pinned else idx - n_subfolders
+        book = app.books[bi]
         # v26.07.13.06 (Kaleb's follow-up): a thin divider line marking
         # the pinned/unpinned boundary, but -- unlike the old v26.07.12.16
         # separator this replaces -- reserving ZERO extra vertical space.
@@ -16034,9 +15269,14 @@ def draw_library(renderer, app):
         # instead just overlays on top of a gap that was ALWAYS there,
         # at every scroll position, whether the boundary is on screen or
         # not, so there's nothing to leave behind when it isn't.
-        if pinned_count and bi == pinned_count:
+        # v26.07.28.09: draws at idx == n_pinned now (right before
+        # whatever comes next -- subfolders if any, otherwise the first
+        # unpinned book), not bi == pinned_count -- bi no longer tracks
+        # this boundary directly once subfolder rows can sit between the
+        # two book segments.
+        if n_pinned and idx == n_pinned:
             fill_rect(renderer, _sx(20), y - _sy(2), SW - _sx(40), 1, COL_DIM)
-        if bi == app.lib_index:
+        if idx == app.lib_index:
             anim_y = y  # v26.07.17.05: glide removed (Kaleb's report --
                         # real-hardware text flicker while the glide was
                         # mid-animation); instant snap now, no per-frame
@@ -16045,7 +15285,18 @@ def draw_library(renderer, app):
                         # v26.07.16.07/.08 entries further below for how
                         # the glide itself worked while it existed.
             fill_rect_rounded(renderer, _sx(10), int(anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
-        color = COL_ACCENT if bi == app.lib_index else COL_TEXT
+        # v26.07.28.10 (Kaleb's request: multi-select for Move to
+        # Folder). A colored left-edge accent bar rather than a text/
+        # glyph marker -- avoids any risk of a Unicode checkbox symbol
+        # not being covered by the bundled DejaVu Sans Condensed fonts
+        # (unverified without a real glyph-coverage check), and reuses
+        # fill_rect(), already proven safe everywhere else in this
+        # file. Drawn INSIDE the cursor highlight's own rounded rect
+        # bounds so a row that's both the current cursor AND selected
+        # shows both cues without them fighting for the same space.
+        if book["relpath"] in app.lib_selected:
+            fill_rect(renderer, _sx(10), y, _sx(4), row_h - _sy(4), COL_ACCENT)
+        color = COL_ACCENT if idx == app.lib_index else COL_TEXT
         is_continue = continue_path is not None and book["path"] == continue_path
         # Status icons (resume/pin/finished) live in a fixed-width left
         # gutter (icon_gutter_w, computed once above the loop) rather
@@ -16115,14 +15366,14 @@ def draw_library(renderer, app):
         # (unless it's ALSO the current selection highlight, which
         # already gets COL_ACCENT) so the marker reads clearly even at
         # the smallest Font Size step where the glyph itself is tiny.
-        if is_continue and bi != app.lib_index:
+        if is_continue and idx != app.lib_index:
             color = COL_ACCENT
         _ty = _row_text_y(y, row_h, app.fonts.ui_body, 4)
         if icons_str:
             render_text(renderer, app.fonts.ui_body, icons_str, color, _sx(24), _ty)
         render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24) + icon_w, _ty)
 
-    if not app.books:
+    if not app.books and not app.lib_subfolders:
         # v0.1.73: this used to be a single un-wrapped render_text() call
         # at a fixed _sy(100) -- fine at the old fixed UI font, but at
         # larger Font Size steps the full LIBRARY_DIR path ran off the
@@ -16132,14 +15383,54 @@ def draw_library(renderer, app):
         # greedy word-wrap as the hint bar (_wrap_hint_text_unbounded)
         # and anchors to the already-dynamic `top` instead of a fixed
         # pixel offset.
-        msg = f"No .epub files found in {LIBRARY_DIR}"
+        # v26.07.27.43: reflects the actual folder being browsed now
+        # that Library is navigable, not always the top-level
+        # LIBRARY_DIR -- an empty subfolder used to (incorrectly) claim
+        # nothing was found in the WHOLE library.
+        # v26.07.28.04 BUG FIX (Kaleb's request, bug-check follow-up):
+        # same class of bug as New Folder/Delete Folder -- this used to
+        # read lib_current_folder unconditionally, so a stale folder
+        # from earlier Folders browsing could make an empty flat (All/
+        # Unfinished/etc) library claim nothing was found in a subfolder
+        # you're not even looking at. Gated on Filter == "folders" too.
+        #
+        # v26.07.29.01 BUG FIX (Kaleb's report): this message was shown
+        # verbatim for EVERY filter, so Pinned/Finished/Unfinished with
+        # zero matching books -- a perfectly normal state when the
+        # library isn't actually empty -- claimed "No .epub files found
+        # in <LIBRARY_DIR>", which is simply false and confusing (reads
+        # as a missing-library/broken-scan error). Distinguish "library
+        # genuinely has no books at all" (app._all_books empty -- keep
+        # the original path message) from "this FILTER has nothing to
+        # show" (books exist, just none pinned/finished/unfinished),
+        # which now gets its own friendly, filter-specific line plus the
+        # existing Menu-logo face instead of the path message.
+        _empty_scope = app.lib_current_folder if app.lib_filter_mode == "folders" else ""
+        _empty_dir = os.path.join(LIBRARY_DIR, _empty_scope) if _empty_scope else LIBRARY_DIR
+        _face_line = None
+        if app.lib_filter_mode == "pinned" and app._all_books:
+            msg = "You haven't pinned any books yet."
+            _face_line = FACE_MENU_LOGO
+        elif app.lib_filter_mode == "finished" and app._all_books:
+            msg = "You haven't finished a book yet -- get reading!"
+            _face_line = FACE_MENU_LOGO
+        elif app.lib_filter_mode == "unfinished" and app._all_books:
+            msg = "You've finished every book in your library!"
+            _face_line = FACE_MENU_LOGO
+        else:
+            msg = f"No .epub files found in {_empty_dir}"
         empty_max_w = SW - _sx(48)
         empty_lines = (_wrap_path_message(app.fonts.ui_body, msg, empty_max_w)
                        if app.fonts.ui_body else [msg])
         empty_line_h = TTF.TTF_FontHeight(app.fonts.ui_body) + _sy(6)
+        _empty_top = top
+        if _face_line:
+            render_text(renderer, app.fonts.ui_heading, _face_line, COL_ACCENT,
+                        _sx(24), _empty_top)
+            _empty_top += TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(8)
         for ei, eline in enumerate(empty_lines):
             render_text(renderer, app.fonts.ui_body, eline, COL_DIM,
-                        _sx(24), top + ei * empty_line_h)
+                        _sx(24), _empty_top + ei * empty_line_h)
 
     if app.status_msg and time.time() < app.status_until:
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_WARNING,
@@ -16151,16 +15442,25 @@ def draw_library(renderer, app):
     # request): Pin moved back INTO the bar as "START Pin" and removed
     # from the menu -- START already did toggle_pin() unconditionally,
     # so this just makes an existing shortcut discoverable and drops
-    # the now-redundant "Pin/Unpin Selected" row. Mark Finished/SELECT
-    # deliberately NOT touched the same way -- still menu-only, per
-    # Kaleb's own call when this was reviewed. Sort keeps its bar
+    # the now-redundant "Pin/Unpin Selected" row. Sort keeps its bar
     # shortcut (Y) since it's used often enough to justify staying
     # dual-access; Jump 10 stays too, since it's a scroll aid, not a
     # toggle, and doesn't fit the menu's "configure" pattern the same way.
+    # v26.07.27.25 (Kaleb's request, download-button-consistency
+    # follow-up): SELECT used to be a redundant Mark Finished/Unfinished
+    # shortcut (that already existed as its own Library Menu row too) --
+    # freed up and given to Filter cycle instead, same "direct hotkey
+    # for a menu item" treatment Y already gets for Sort.
     # v26.07.12.05: "START Menu" -> "X Menu", matching the X/START swap.
-    lib_hint = "A Open  X Menu  Y Sort  START Pin  LEFT/RIGHT Jump 10  L/R Font Size  B Quit"
+    # v26.07.28.18 (Kaleb's request: bug/clarity/UI sweep -- R2 multi-
+    # select, added this session for Move to Folder, had NO on-screen
+    # indication at all, unlike every other bound button on this
+    # screen. A completely hidden hotkey with zero discoverability
+    # unless someone happens to read this codebase.
+    lib_hint = "A Open  X Menu  Y Sort  SELECT Filter  START Pin  LEFT/RIGHT Jump 10  L/R Font Size  R2 Select  B Quit"
     if DOWNLOAD_PLUGINS:
-        lib_hint = "A Open  X Menu  Y Sort  START Pin  LEFT/RIGHT Jump 10  L/R Font Size  L2 Download  B Quit"
+        lib_hint = ("A Open  X Menu  Y Sort  SELECT Filter  START Pin  LEFT/RIGHT Jump 10  "
+                     "L/R Font Size  L2 Download  R2 Select  B Quit")
     draw_hint(renderer, app.fonts, lib_hint)
 
 
@@ -16629,7 +15929,24 @@ def draw_reader(renderer, app):
     # can show here: bookmark added, exiting, video-download/resolve
     # status, and any Font Size +/- toast fired on the reader screen.
     if app.status_msg and time.time() < app.status_until:
-        _status_bottom_y = (SH - _sy(8)) if app.immersive_mode \
+        # v26.07.29.02 BUG FIX (Kaleb's report: "font toast is behind
+        # the hint bar and never seen" in Immersive Mode): the
+        # immersive_mode bottom-anchor (SH - 8) assumes NO hint bar is
+        # drawn anywhere near the screen bottom -- true for the bare
+        # reader screen (draw_hint() is skipped entirely above when
+        # immersive_mode is on), but draw_menu() calls draw_reader() for
+        # its background and then ALWAYS draws its own hint bar
+        # ("UP/DOWN Select A Confirm B Back") regardless of
+        # immersive_mode, right on top of that same bottom region.
+        # Font Size +/- deliberately "stays open" on SCREEN_MENU (see
+        # that choice's handler) so the toast fires while the Menu -- and
+        # its hint bar -- is on screen, which painted right over the
+        # toast every time. Fixed by only using the true-bottom anchor
+        # when we're actually on the bare reader screen; SCREEN_MENU
+        # (or any other screen that layers its own hint bar over
+        # draw_reader's background) keeps the pre-hint-bar position.
+        _immersive_bottom = app.immersive_mode and app.screen == SCREEN_READER
+        _status_bottom_y = (SH - _sy(8)) if _immersive_bottom \
             else SH - _sy(hint_height(app.fonts))
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
                           _status_bottom_y, alpha=app.status_alpha())
@@ -16730,7 +16047,11 @@ def draw_reader(renderer, app):
         # HINT_SIDE_PAD (which was sized for the hint bar's own
         # padding needs, not the true screen edge) -- lets the marker
         # sit further right, using the extra room Kaleb noticed.
-        if app.immersive_mode:
+        if app.immersive_mode and app.screen == SCREEN_READER:
+            # v26.07.29.02: same bug class as the status toast above --
+            # this true-bottom anchor assumes no hint bar is drawn near
+            # it, which is false while SCREEN_MENU is layering its own
+            # hint bar over this same background.
             label_font = app.fonts.ui_small
             label_w = text_width(label_font, label)
             label_h = TTF.TTF_FontHeight(label_font)
@@ -16843,7 +16164,10 @@ def draw_reader(renderer, app):
         # and fades on its own, so brief overlap with the last line of
         # text is fine; its own background pill keeps it legible either
         # way, same as any other short-lived toast in this app.
-        if app.immersive_mode:
+        if app.immersive_mode and app.screen == SCREEN_READER:
+            # v26.07.29.02: same bug class as the status toast/marker
+            # above -- SCREEN_MENU always draws its own hint bar over
+            # this region regardless of immersive_mode.
             _toast_y = SH - _sy(8) - _toast_h
         else:
             if _hint_result is not None:
@@ -17175,6 +16499,13 @@ def draw_menu(renderer, app):
         label = item
         if item == "Immersive Mode":
             label = f"Immersive Mode: {'On' if app.immersive_mode else 'Off'}"
+        if item == "Fast Scroll":
+            # v26.07.27.08 (Feature #2): this label reflects the
+            # PERSISTENT default (what fast_scroll starts at when a
+            # book opens), not the live per-session Y-toggle state --
+            # those are deliberately different things, see A confirm's
+            # own comment below.
+            label = f"Fast Scroll: {'Always On' if app.fast_scroll_default == 'always_on' else 'Manual'}"
         if item == "Sound Effects":
             label = f"Sound Effects: {'On' if app.sound_enabled else 'Off'}"
         if item == "Night Mode":
@@ -17187,7 +16518,7 @@ def draw_menu(renderer, app):
         color = COL_ACCENT if mi == app.menu_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 6))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
 
 def draw_toc(renderer, app):
@@ -17198,7 +16529,16 @@ def draw_toc(renderer, app):
     top = _sy(70)
     visible = (SH - top - _sy(hint_height(app.fonts))) // row_h
     row_max_w = SW - _sx(44)
-    start = max(0, app.toc_index - visible // 2)
+    # v26.07.28.21 BUG FIX (Kaleb's request: audit wrap/cold-wrap/TOC).
+    # Only clamped against the TOP (0) -- every other scrollable list in
+    # this file (Library, Delete Folder, Delete Theme, Select Theme, ...)
+    # also clamps against the BOTTOM (max(0, n - visible)), so the
+    # window stays filled with a full page right up to the last entry.
+    # Without it, navigating near the end of a long chapter list left
+    # the bottom of the screen sitting empty instead of showing the
+    # last `visible` rows -- confirmed by direct comparison against
+    # draw_library()'s own start= line, which already does both sides.
+    start = max(0, min(app.toc_index - visible // 2, max(0, len(app.toc_flat) - visible)))
     for i in range(visible):
         ti = start + i
         if ti >= len(app.toc_flat):
@@ -17212,7 +16552,7 @@ def draw_toc(renderer, app):
         label = ("  " * entry.level) + entry.title
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, row_max_w),
                     color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R/Y +10   L2/R2 Prev/Next Book   A Go   B Cancel")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R/Y +10   L2/R2 Prev/Next Book   A Go   B Back")
 
 
 def draw_text_entry(renderer, app):
@@ -17223,26 +16563,111 @@ def draw_text_entry(renderer, app):
     # ("w=Watchtower g=Awake! ...") ran past the right edge instead of
     # wrapping (confirmed via Kaleb's on-device screenshot). Both now wrap
     # up to 2 lines, same helper the hint bar uses.
+    #
+    # v26.07.27.26 (Kaleb's report at large Font Size: "backspace/enter/
+    # ok get cut off" and "keyboard flows off the screen"). Full writeup
+    # of the height half of this fix: the keyboard grid below has its own
+    # hard floor (a cell can't shrink past its own font height without
+    # clipping the label, see the grid section's comments) -- but on a
+    # real device shorter than the 720x720 this was built against
+    # (RG34XX-SP is 720x480, SW locked at 720 across devices per this
+    # app's own convention, only SH varies), even that floor didn't
+    # always leave enough room once the prompt/value-box/status area
+    # above it were included too, at max Font Size with a genuinely long
+    # real string (jw_fetch.py's MANUAL_CODE_HINT). Confirmed by
+    # simulating the actual real prompt+hint text through the real
+    # layout math at both 720 and 480 -- 480 still overflowed even after
+    # capping status to 1 line and using the grid's own floor cell
+    # height, because the fixed padding ABOVE the grid (top margin, box
+    # padding, inter-section gaps) was generous enough on its own to
+    # leave the grid short by itself.
+    #
+    # Fix: two padding profiles, not one. This screen is D-pad-navigated,
+    # never touch -- so unlike a touchscreen keyboard there's no minimum
+    # tap-target size to protect above font legibility, which is what
+    # makes tightening these gaps safe. ROOMY is what every screen used
+    # before this fix (unchanged look on the 720x720 CubeXX-H, where the
+    # generous version always fit anyway). TIGHT only engages when a
+    # cheap up-front check shows ROOMY would genuinely overflow this
+    # SH -- so this only ever changes anything on a shorter screen at a
+    # large-enough Font Size to need it, never on the primary target.
+    _PAD_ROOMY = {"top": 16, "prompt_gap": 10, "box_pad": 20, "box_gap": 10, "status_gap": 10}
+    _PAD_TIGHT = {"top": 4, "prompt_gap": 2, "box_pad": 6, "box_gap": 2, "status_gap": 2}
+
     max_w = SW - _sx(40)
-    prompt_lines = _wrap_hint_text(app.fonts.ui_heading, app.te_prompt, max_w) or [""]
     heading_h = TTF.TTF_FontHeight(app.fonts.ui_heading)
-    y = _sy(16)
+    body_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+    small_h = TTF.TTF_FontHeight(app.fonts.ui_small)
+    prompt_lines = _wrap_hint_text(app.fonts.ui_heading, app.te_prompt, max_w) or [""]
+    rows = TEXT_ENTRY_GRID
+    _kb_floor_cell_h = max(body_h, small_h) + _sy(6)  # v26.07.27.26 REAL
+        # BUG FIX (found while verifying this same fix): was +8, still
+        # left a real overflow in the tightest genuine combination (long
+        # prompt + an actual validation error + RG34XX-SP's 480px screen
+        # at max Font Size) -- confirmed via simulation with the real
+        # error strings jw_fetch.py actually returns, not an invented
+        # one. +6 exactly matches fill_rect_rounded's own inset (_sy(6)
+        # top+bottom combined), so the label fills its highlight rect
+        # edge-to-edge with zero breathing room -- tighter-looking than
+        # ideal, but only ever engages in this one rare edge case (an
+        # error is transient, unlike the everyday case), and still never
+        # clips the label itself, just removes the margin around it.
+    _kb_floor_total_h = len(rows) * _kb_floor_cell_h
+    _hint_bar_h = _sy(hint_height(app.fonts))
+
+    def _fits(pad):
+        _top = _sy(pad["top"]) + len(prompt_lines) * heading_h
+        _box_y = _top + _sy(pad["prompt_gap"])
+        _box_h = body_h + _sy(pad["box_pad"])
+        _status_y = _box_y + _box_h + _sy(pad["box_gap"])
+        # worst case: assume status needs at least 1 line (never fully
+        # suppressed) when checking whether this profile has room at all
+        _min_needed = _status_y + small_h + _sy(pad["status_gap"]) + _kb_floor_total_h
+        return _min_needed <= (SH - _hint_bar_h)
+
+    pad = _PAD_ROOMY if _fits(_PAD_ROOMY) else _PAD_TIGHT
+
+    y = _sy(pad["top"])
     for line in prompt_lines:
         render_text(renderer, app.fonts.ui_heading, line, COL_ACCENT, _sx(20), y)
         y += heading_h
 
     # typed-so-far value, in its own box near the top
-    box_y = y + _sy(10)
-    body_h = TTF.TTF_FontHeight(app.fonts.ui_body)
-    box_h = body_h + _sy(20)
+    box_y = y + _sy(pad["prompt_gap"])
+    box_h = body_h + _sy(pad["box_pad"])
     fill_rect_rounded(renderer, _sx(20), box_y, SW - _sx(40), box_h, COL_PANEL)
     shown = app.te_value if app.te_value else "(type below, OK to confirm)"
     color = COL_TEXT if app.te_value else COL_DIM
     render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, shown, SW - _sx(60)),
-                color, _sx(30), box_y + _sy(10))
+                color, _sx(30), box_y + box_h // 2 - body_h // 2)
 
-    status_y = box_y + box_h + _sy(10)
-    small_h = TTF.TTF_FontHeight(app.fonts.ui_small)
+    status_y = box_y + box_h + _sy(pad["box_gap"])
+
+    # Status text's own line budget: same floor-first reasoning as
+    # before -- reserve the grid's floor height, let status use whatever
+    # room is genuinely left above it, capped at the existing
+    # HINT_H_MAX_LINES(3) ceiling. v26.07.27.26 REAL BUG FIX during this
+    # same fix's own verification: this used to clamp _status_room to a
+    # minimum of small_h (i.e. always PRETENDING at least 1 line's worth
+    # of room existed, even when the real math said zero) -- which
+    # defeated the whole point on the exact tightest real case (long
+    # prompt + jw_fetch.py's long MANUAL_CODE_HINT + RG34XX-SP's actual
+    # 720x480 screen at max Font Size): it kept reporting "1 line fits"
+    # and drawing that line even when doing so pushed the keyboard's own
+    # floor height past the bottom of the screen -- the exact overflow
+    # this whole fix exists to prevent, just moved one line's height
+    # later instead of eliminated. An ACTIVE error or the checking
+    # spinner is never fully hidden (those need to stay visible even if
+    # it costs a few px of keyboard room -- they're transient, not the
+    # everyday case), but a plain informational hint (te_hint, not
+    # currently blocking anything) is allowed to drop to zero lines --
+    # the keyboard itself is what actually needs to stay visible, and
+    # losing a supplementary format hint is a far smaller cost than the
+    # keyboard running off-screen.
+    _status_room = max(0, (SH - _hint_bar_h - _kb_floor_total_h) - status_y)
+    _status_min_lines = 1 if (app.te_error or app.te_checking) else 0
+    _status_max_lines = max(_status_min_lines, min(HINT_H_MAX_LINES, _status_room // small_h))
+
     status_lines = []
     if app.te_checking:
         spinner = "|/-\\"[int(time.time() * 4) % 4]
@@ -17253,9 +16678,9 @@ def draw_text_entry(renderer, app):
         # added to it this session.
         status_lines = [_kaomoji_for_status(f"Checking {spinner}  ({secs}s)")]
     elif app.te_error:
-        status_lines = _wrap_hint_text(app.fonts.ui_small, app.te_error, max_w)
-    elif app.te_hint:
-        status_lines = _wrap_hint_text(app.fonts.ui_small, app.te_hint, max_w)
+        status_lines = _wrap_hint_text(app.fonts.ui_small, app.te_error, max_w, max_lines=_status_max_lines)
+    elif app.te_hint and _status_max_lines > 0:
+        status_lines = _wrap_hint_text(app.fonts.ui_small, app.te_hint, max_w, max_lines=_status_max_lines)
     status_color = COL_WARNING if app.te_error else COL_DIM
     for line in status_lines:
         render_text(renderer, app.fonts.ui_small, line, status_color, _sx(24), status_y)
@@ -17265,22 +16690,40 @@ def draw_text_entry(renderer, app):
     # the WIDEST row (10, the digit row) so every cell is the same size
     # regardless of which row it's in; narrower rows just don't fill the
     # full row width, which reads fine visually (left-aligned).
-    rows = TEXT_ENTRY_GRID
-    grid_top = status_y + _sy(10)
+    #
+    # v26.07.27.26 (same request as above): the action row (SPACE/DEL/
+    # OK/CANCEL) used to be forced into the SAME cell width as the
+    # 10-column digit row, even though it only has 4 cells and plenty of
+    # unused width to its right -- "DEL"/"OK"/"CANCEL" at a large Font
+    # Size's bigger ui_small routinely didn't fit that narrow a cell, so
+    # _fit_text() shrunk/truncated them. Now computed as its own row,
+    # full grid width / 4 -- letter/digit rows untouched, still sharing
+    # their own uniform cell_w exactly as before.
+    grid_top = status_y + _sy(pad["status_gap"])
     max_cols = max(len(row) for row in rows)
     cell_w = (SW - _sx(40)) // max_cols
-    cell_h = max(body_h, small_h) + _sy(24)
+    action_row_idx = len(rows) - 1
+    action_cell_w = (SW - _sx(40)) // len(rows[action_row_idx])
+
+    _natural_cell_h = max(body_h, small_h) + _sy(24)
+    _available_h = max(0, (SH - _hint_bar_h) - grid_top)
+    if len(rows) * _natural_cell_h > _available_h:
+        cell_h = max(_kb_floor_cell_h, _available_h // len(rows))
+    else:
+        cell_h = _natural_cell_h
+
     for r, row in enumerate(rows):
+        row_cell_w = action_cell_w if r == action_row_idx else cell_w
         for c, (label, kind) in enumerate(row):
-            x = _sx(20) + c * cell_w
+            x = _sx(20) + c * row_cell_w
             gy = grid_top + r * cell_h
             selected = (r == app.te_row and c == app.te_col)
             bg = COL_MENU_SEL_BG if selected else COL_PANEL
-            fill_rect_rounded(renderer, x + _sx(3), gy + _sy(3), cell_w - _sx(6), cell_h - _sy(6), bg,
+            fill_rect_rounded(renderer, x + _sx(3), gy + _sy(3), row_cell_w - _sx(6), cell_h - _sy(6), bg,
                                radius=_sx(3))
             fg = COL_ACCENT if selected else (COL_WARNING if kind in ("confirm", "cancel") else COL_TEXT)
             font = app.fonts.ui_small if kind not in ("char", "space") else app.fonts.ui_body
-            render_text(renderer, font, _fit_text(font, label, cell_w - _sx(12)), fg, x + _sx(8), gy + _sy(10))
+            render_text(renderer, font, _fit_text(font, label, row_cell_w - _sx(12)), fg, x + _sx(8), gy + _sy(10))
 
     draw_hint(renderer, app.fonts, "D-PAD Move   A Select   X Backspace   B Cancel")
 
@@ -17443,6 +16886,49 @@ APP_HELP_PARAGRAPHS = [
 ]
 
 
+# v26.07.29.10 (Kaleb's request): unified A/V Controls Help, reachable
+# via the quick menu (X) on all six download/browse picker screens --
+# NOT during actual playback itself (mpv/ffplay own the whole screen
+# once launched, so there's nowhere to show this then anyway). One
+# shared page for both video and audio -- the button scheme is
+# identical between them except where noted, so a single page covers
+# both instead of needing two near-duplicate ones. Every key mentioned
+# here is a REAL mpv and/or ffplay default (see native_video.py's own
+# control docstrings for the exact keys and sourcing) -- kept to BASICS
+# ONLY, same policy as APP_HELP_PARAGRAPHS above: update this only when
+# the control SCHEME changes, not for every unrelated feature.
+AV_CONTROLS_HELP_PARAGRAPHS = [
+    ("BASICS", True),
+    ("A -- pause / play.", False),
+    ("B -- quit this video or track (and the whole Play All / Shuffle "
+     "All queue, if one is active).", False),
+    ("SEEKING", True),
+    ("D-PAD LEFT/RIGHT -- seek back / forward about 5 seconds.", False),
+    ("D-PAD UP/DOWN -- seek forward / back about 60 seconds.", False),
+    ("L1 / R1 -- seek back / forward about 10 minutes.", False),
+    ("L2 / R2 -- previous / next chapter, for content with real "
+     "chapter markers. In a Play All / Shuffle All queue, these skip "
+     "to the previous / next item instead.", False),
+    ("OTHER CONTROLS", True),
+    ("X -- mute.", False),
+    ("Y -- (video) cycle subtitles; (audio) toggle repeat on the "
+     "current track.", False),
+    ("START -- toggle the on-screen title/progress bar so it stays "
+     "visible instead of only flashing briefly.", False),
+    ("SELECT -- toggle the on-screen stats overlay (codec, bitrate, "
+     "resolution, dropped frames).", False),
+    ("A NOTE ON PLAYERS", True),
+    ("PicoReader uses mpv when it's available on the device, falling "
+     "back to ffplay otherwise. Nearly every control above works "
+     "identically on both players -- including L2/R2's chapter skip "
+     "and video's subtitle cycle, which both have real ffplay "
+     "equivalents too. The only real differences: START and SELECT "
+     "have no ffplay equivalent at all and simply do nothing there; "
+     "audio's repeat toggle (Y) is the same. Neither is a bug, just "
+     "a difference between the two players.", False),
+]
+
+
 HELP_PARAGRAPHS = [
     # v0.1.155: Kaleb: "this code thing is confusing" -- plain-language
     # explanation of the two ways to find a publication, shown via a new
@@ -17487,12 +16973,20 @@ def _download_browse_menu_items(app):
     hotkey already use, just reachable from here too now. Also added
     for video specifically: "Fit/Fill Screen", the same app.video_
     fill_screen toggle that used to live only in the separate Video
-    Settings screen."""
+    Settings screen.
+
+    v26.07.27.09 (Kaleb's request -- Feature #3, "Simplify Fill Screen
+    Text"): this used to read "Screen Scaling: Fill (stretch)"/"Screen
+    Scaling: Fit (preserve aspect ratio)" -- the only long-form variant
+    of this label anywhere in the app (searched every "Fill"/"Fit"
+    label site to confirm). Standardized to the same short "Fill
+    Screen: On/Off" the separate Video Settings screen's own label
+    already uses -- one consistent label everywhere this toggle
+    appears, not two different phrasings for the same setting."""
     items = []
     if app.dl_is_video:
         items += ["Stream", "Download", "Play All", "Shuffle All", "Search"]
-        fill_label = "Fill (stretch)" if app.video_fill_screen else "Fit (preserve aspect ratio)"
-        items.append(f"Screen Scaling: {fill_label}")
+        items.append(f"Fill Screen: {'On' if app.video_fill_screen else 'Off'}")
     elif app.dl_is_audio:
         items += ["Play", "Download", "Play All", "Shuffle All"]
         # v26.07.23.01 (Kaleb's request): "Download All" -- only for the
@@ -17529,6 +17023,15 @@ def draw_download_browse_menu(renderer, app):
     overlay_w = _sx(320)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.27.07 (Kaleb's request -- Feature #1, "Status Bar in
+    # Pop-Ups"): same battery/WiFi/clock indicators draw_menu()/
+    # draw_library_menu() already show, added here too -- this was one
+    # of the "sub pop ups in Gutenberg and JW.py pages" missing them.
+    # Same right_x/top_y convention (anchored to the real screen edge,
+    # not this overlay's own left edge, so it's independent of
+    # overlay_w) -- see draw_menu()'s own call for the pattern this
+    # copies.
+    _draw_status_indicators(renderer, app, SW - _sx(14), _sy(18))
     items = _download_browse_menu_items(app)
     row_h = _row_h(app.fonts.ui_body)
     top = _sy(76)
@@ -17695,6 +17198,20 @@ def _download_quick_menu_items(app):
     items = []
     if app.dl_quick_menu_return_screen in (SCREEN_DOWNLOAD_SOURCES, SCREEN_DOWNLOAD_CATEGORIES):
         items.append("Help")
+    # v26.07.29.10 (Kaleb's request): unlike "Help" above, A/V Controls
+    # Help applies to all six picker screens equally -- it documents
+    # video/audio PLAYBACK controls, not category/search navigation,
+    # so it's relevant regardless of which content type a given screen
+    # browses.
+    items.append("A/V Controls Help")
+    # v26.07.30.31 (Kaleb: "don't make it migrate manually make it
+    # passive... should only do this during downloads to prevent
+    # duplications"): the manual "Migrate Downloads" quick-menu item
+    # from v26.07.30.30 is removed -- migration now happens
+    # automatically inside the normal download flow itself (see
+    # start_download()'s stray-file handling below), triggered by the
+    # exact same find_existing_file_elsewhere() check that already
+    # runs on every download to avoid duplicates, not a separate scan.
     items += ["Font Size +", "Font Size -", "Library", "Exit App", "Back"]
     return items
 
@@ -17721,12 +17238,20 @@ def draw_download_quick_menu(renderer, app):
         draw_download_video_series(renderer, app)
     elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
         draw_download_audio_sources(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_GROUP:
+        draw_download_audio_group(renderer, app)
     elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
         draw_download_audio_books(renderer, app)
+    elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_ISSUES:
+        draw_download_audio_issues(renderer, app)
     items = _download_quick_menu_items(app)
     overlay_w = _sx(320)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.27.07 (Kaleb's request -- Feature #1, "Status Bar in
+    # Pop-Ups"): same indicators added to draw_download_browse_menu()
+    # just above -- see that call's own comment for the full reasoning.
+    _draw_status_indicators(renderer, app, SW - _sx(14), _sy(18))
     row_h = _row_h(app.fonts.ui_body)
     top = _sy(76)
     item_max_w = overlay_w - _sx(40)
@@ -17751,6 +17276,11 @@ def draw_licenses(renderer, app):
 def draw_app_help(renderer, app):
     _draw_static_scroll_overlay(renderer, app, "HELP",
                                  APP_HELP_PARAGRAPHS, "help_scroll")
+
+
+def draw_av_help(renderer, app):
+    _draw_static_scroll_overlay(renderer, app, "A/V CONTROLS HELP",
+                                 AV_CONTROLS_HELP_PARAGRAPHS, "av_help_scroll")
 
 
 def draw_download_categories(renderer, app):
@@ -17779,6 +17309,17 @@ def draw_download_categories(renderer, app):
     if getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
         hint_parts.append("SELECT Code")
     hint_parts += ["A Open", "X Menu", "B Back"]
+    # v26.07.29.03 BUG FIX (Kaleb's report): this screen (and every other
+    # Download picker below) never drew app.status_msg at all -- L/R
+    # Font Size set the message via set_status() same as every other
+    # screen, but nothing here ever called _draw_status_bar() to show
+    # it, so the toast silently never appeared. Positioned the same way
+    # draw_library()'s toast is (just above the hint bar) -- these
+    # screens have no Immersive Mode concept, so there's only ever the
+    # one position to worry about.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     draw_hint(renderer, app.fonts, "   ".join(hint_parts))
 
 
@@ -17800,6 +17341,11 @@ def draw_download_sources(renderer, app):
         color = COL_ACCENT if i == app.dl_source_index else COL_TEXT
         name = getattr(plugin, "PLUGIN_NAME", plugin.__name__)
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    # v26.07.29.03 BUG FIX: same missing-toast bug as draw_download_categories
+    # above -- see that function's comment.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
@@ -17823,6 +17369,10 @@ def draw_download_video_sources(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.video_source_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, VIDEO_SOURCE_ITEMS[i], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    # v26.07.29.03 BUG FIX: same missing-toast bug as draw_download_categories.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
@@ -17846,6 +17396,10 @@ def draw_download_audio_sources(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.audio_source_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, AUDIO_SOURCE_ITEMS[i], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    # v26.07.29.03 BUG FIX: same missing-toast bug as draw_download_categories.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
@@ -17872,6 +17426,51 @@ def draw_download_audio_books(renderer, app):
         color = COL_ACCENT if i == app.audio_book_index else COL_TEXT
         _, name = books[i]
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    # v26.07.29.03 BUG FIX: same missing-toast bug as draw_download_categories.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
+
+
+def draw_download_audio_issues(renderer, app):
+    """v26.07.30.28: back-issue picker for AUDIO_SOURCES entries marked
+    "issues": True (Watchtower Study/Meeting Workbook audio) -- same
+    simple list pattern as draw_download_audio_books(), but the list
+    (app._dl_audio_issue_list) is fetched async by open_audio_issue_
+    picker() rather than being a fixed constant, so this also needs a
+    loading state (same spinner/message pattern draw_download_browse()
+    already uses while app.dl_loading is True)."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    source = app._pending_audio_source
+    heading = (source or {}).get("label", "ISSUES").upper()
+    render_text(renderer, app.fonts.ui_heading, heading, COL_ACCENT, _sx(20), heading_y)
+    if app.dl_loading:
+        draw_hint(renderer, app.fonts, "Loading...")
+        return
+    if app.dl_load_error and not app._dl_audio_issue_list:
+        render_text(renderer, app.fonts.ui_body, app.dl_load_error, COL_TEXT,
+                     _sx(24), heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14))
+        draw_hint(renderer, app.fonts, "B Back")
+        return
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    issues = app._dl_audio_issue_list
+    n_items = len(issues)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.audio_issue_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == app.audio_issue_index:
+            _anim_y = y  # v26.07.17.05: glide removed, instant snap
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.audio_issue_index else COL_TEXT
+        _, label = issues[i]
+        render_text(renderer, app.fonts.ui_body, label, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
@@ -17902,13 +17501,47 @@ def draw_download_video_series(renderer, app):
             fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.video_series_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, subs[i]["label"], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    # v26.07.29.03 BUG FIX: same missing-toast bug as draw_download_categories.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
+
+
+def draw_download_audio_group(renderer, app):
+    """v26.07.30.16: sub-picker for AUDIO_SOURCES entries marked
+    "subcategories" ("Music"/"Publications") -- same generic pattern as
+    draw_download_video_series() (reads app._pending_audio_group_source
+    ["subcategories"], no plugin-specific code here), just for the audio
+    side, which didn't have this nesting level before this session."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    source = app._pending_audio_group_source
+    label = (source or {}).get("label", "AUDIO").upper()
+    subs = (source or {}).get("subcategories", [])
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, label, COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    n_items = len(subs)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.audio_group_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == app.audio_group_index:
+            _anim_y = y  # v26.07.17.05: glide removed, instant snap
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.audio_group_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, subs[i]["label"], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Font Size   A Open   X Menu   B Back")
 
 
 def draw_download_browse(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     name = ("JW Videos" if app.dl_is_video else
-             "JW Audio" if app.dl_is_audio else
+             "JW Audio" if (app.dl_is_audio or app.dl_audio_pub_mode) else
              (getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download"))
     title = f"{name.upper()}"
     if app.dl_category:
@@ -18097,7 +17730,18 @@ def draw_library_delete_folder(renderer, app):
     press time, not cached here) to avoid silently destroying books."""
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     heading_y = _sy(16)
-    render_text(renderer, app.fonts.ui_heading, "DELETE FOLDER", COL_ACCENT, _sx(20), heading_y)
+    # v26.07.27.43: shows WHICH folder this list is scoped to now that
+    # it's no longer always the Library root -- same breadcrumb
+    # convention draw_library() itself uses.
+    # v26.07.28.04 BUG FIX (Kaleb's request, bug-check follow-up): gated
+    # on Filter == "folders" too, same reasoning as _delete_folder_base
+    # right below -- this heading must match wherever the base dir
+    # actually points, not a stale lib_current_folder from earlier
+    # Folders browsing.
+    _heading_scope = app.lib_current_folder if app.lib_filter_mode == "folders" else ""
+    heading_text = "DELETE FOLDER" if not _heading_scope else f"DELETE FOLDER (in {_heading_scope})"
+    render_text(renderer, app.fonts.ui_heading, _fit_text(app.fonts.ui_heading, heading_text, SW - _sx(40)),
+                COL_ACCENT, _sx(20), heading_y)
     row_h = _row_h(app.fonts.ui_body)
     top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
     # v26.07.23.17 BUG FIX (found during a cosmetic-UI audit): rows here
@@ -18114,7 +17758,18 @@ def draw_library_delete_folder(renderer, app):
     # with the same _fit_text() ellipsis convention used everywhere else
     # dynamic-length text meets a fixed-width row.
     row_max_w = SW - _sx(48)
-    folders = list_library_folders()
+    # v26.07.28.03 BUG FIX (Kaleb's request, found during a requested
+    # bug-check of the new Folders filter): lib_current_folder is
+    # deliberately preserved across filter switches (so Folders can
+    # resume where you left off), but that also meant Delete Folder
+    # kept operating relative to it even while Filter != "folders" --
+    # a place with no breadcrumb or subfolder rows on screen to confirm
+    # it. Gated to root unless Folders is the active filter, so this
+    # screen always matches what's actually visible.
+    _delete_folder_scope = app.lib_current_folder if app.lib_filter_mode == "folders" else ""
+    _delete_folder_base = (os.path.join(LIBRARY_DIR, _delete_folder_scope)
+                            if _delete_folder_scope else LIBRARY_DIR)
+    folders = list_library_folders(_delete_folder_base)
     if not folders:
         render_text(renderer, app.fonts.ui_body, "No folders yet.", COL_DIM, _sx(24), top)
     else:
@@ -18137,6 +17792,50 @@ def draw_library_delete_folder(renderer, app):
                           SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
     hint = "UP/DOWN Select   A Delete (2x)   B Back" if folders else "B Back"
     draw_hint(renderer, app.fonts, hint)
+
+
+def draw_library_move_folder(renderer, app):
+    """v26.07.27.44 (Kaleb's request: "Move to Folder"). Same list-
+    picker shape as draw_library_delete_folder() just above, but no
+    armed/confirm state -- moving isn't destructive the way deleting
+    is, a single A press is enough. Lists list_all_library_folders()
+    (every folder at every depth, unlike Delete Folder's one-level
+    scope, since reorganizing across branches is the whole point) with
+    an explicit "(Library Root)" option prepended -- "" isn't a real
+    folder name to show in the list otherwise."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    # v26.07.28.10 (Kaleb's request: multi-select). Same priority order
+    # as the Library Menu label and the execution handler -- selection
+    # wins over the single highlighted book if one exists.
+    if app.lib_selected:
+        heading_text = f"MOVE {len(app.lib_selected)} BOOKS"
+    else:
+        target_title = app._menu_target_book["title"] if app._menu_target_book else "(no book selected)"
+        heading_text = f"MOVE: {target_title}"
+    render_text(renderer, app.fonts.ui_heading, _fit_text(app.fonts.ui_heading, heading_text, SW - _sx(40)),
+                COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    row_max_w = SW - _sx(48)
+
+    options = ["(Library Root)"] + list_all_library_folders()
+    n_items = len(options)
+    idx = min(app.lib_move_folder_index, n_items - 1)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(idx - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == idx:
+            fill_rect_rounded(renderer, _sx(10), int(y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == idx else COL_TEXT
+        label = _fit_text(app.fonts.ui_body, options[i], row_max_w)
+        render_text(renderer, app.fonts.ui_body, label, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Move   B Back")
 
 
 def draw_library_menu(renderer, app):
@@ -18186,6 +17885,18 @@ def draw_library_menu(renderer, app):
                 label = "Mark Finished/Unfinished"
         if item == "Filter: Cycle":
             label = f"Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}"
+        if item == "Move to Folder":
+            # v26.07.28.10 (Kaleb's request: multi-select). Selection
+            # takes priority over the single highlighted book in the
+            # label too, matching the trigger/execution logic below --
+            # keeps this row's own text honest about what A will
+            # actually act on.
+            if app.lib_selected:
+                label = f"Move: {len(app.lib_selected)} selected"
+            elif app._menu_target_book:
+                label = f"Move: {app._menu_target_book['title']}"
+            else:
+                label = "Move to Folder"
         armed_delete = False
         if item == "Delete Book":
             if app._menu_delete_armed:
@@ -18212,7 +17923,7 @@ def draw_library_menu(renderer, app):
         color = COL_BG if armed_warning else (COL_ACCENT if i == app.lib_menu_index else COL_TEXT)
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
 
 def draw_theme_menu(renderer, app):
@@ -18229,8 +17940,20 @@ def draw_theme_menu(renderer, app):
     overlay_w = _sx(320)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     render_text(renderer, app.fonts.ui_heading, "THEMES", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.27.12 (Kaleb's request -- Feature #1 follow-up, found during
+    # a full re-review: this popup and Video Settings below were both
+    # missed the first pass, "all pop-up menus" wasn't actually ALL of
+    # them). Same battery/WiFi/clock indicators every other popup now
+    # shows.
+    _draw_status_indicators(renderer, app, SW - _sx(14), _sy(18))
     themes = all_themes()
     current_name = themes[THEME_INDEX]["name"] if 0 <= THEME_INDEX < len(themes) else "?"
+    # v26.07.28.20 (Kaleb's request: cycling clarity): same "(unsaved)"
+    # label the Theme +/- toast now shows -- this subtitle is the OTHER
+    # persistent place the draft's name shows up while browsing, so it
+    # needs the same marker for the same reason.
+    if _DRAFT_THEME is not None and THEME_INDEX == len(themes) - 1:
+        current_name += " (unsaved)"
     # v26.07.15.27 (Kaleb's report): the current theme's name used to be
     # appended to BOTH the "Theme +" and "Theme -" row labels (so it
     # showed up twice in the list itself) on top of a THIRD showing in
@@ -18238,10 +17961,26 @@ def draw_theme_menu(renderer, app):
     # Shown ONCE here instead, as a persistent subtitle under the
     # heading -- still visible at a glance while browsing the submenu,
     # without repeating per-row or fighting with the toast.
+    # v26.07.28.23 (Kaleb's request: standardize popup sizing across
+    # resolutions). These 3 lines used to render at app.fonts.ui_small,
+    # which scales 1:1 with the main Font Size setting -- at max Font
+    # Size on RG34XX-SP's shorter 480px canvas, this block alone (3
+    # lines + gaps) measured 186px, 39% of the ENTIRE screen, before a
+    # single menu row even started. Capped to the same already
+    # resolution-aware pt _hint_pt() computes for the hint bar below --
+    # reusing that value rather than inventing a second, separate cap,
+    # so this and the hint bar always shrink together and stay visually
+    # consistent with each other. This is supporting/glance-at context,
+    # not the primary content Font Size is meant to control (the actual
+    # selectable menu rows below still use app.fonts.ui_body,
+    # completely unaffected -- Font Size still applies fully to what a
+    # person is actually trying to read and select).
+    _subtitle_pt = _hint_pt(app.fonts)
+    _subtitle_font = app.fonts._get(_subtitle_pt) if _subtitle_pt else app.fonts.ui_small
     current_y = _sy(20) + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(4)
-    render_text(renderer, app.fonts.ui_small, f"Current: {current_name}", COL_DIM,
+    render_text(renderer, _subtitle_font, f"Current: {current_name}", COL_DIM,
                 SW - overlay_w + _sx(20), current_y)
-    small_h = TTF.TTF_FontHeight(app.fonts.ui_small)
+    small_h = TTF.TTF_FontHeight(_subtitle_font)
     # v26.07.15.31 (Kaleb's usability pass): two more at-a-glance lines --
     # how many of the 3 custom slots are used (so saving a new one and
     # silently evicting the oldest isn't a surprise), and a pointer to
@@ -18249,11 +17988,11 @@ def draw_theme_menu(renderer, app):
     # Settings from the PARENT menu, not from inside this submenu at
     # all -- easy to not know it exists otherwise).
     saved_y = current_y + small_h + _sy(2)
-    render_text(renderer, app.fonts.ui_small,
+    render_text(renderer, _subtitle_font,
                 f"Saved: {len(CUSTOM_THEMES)}/{MAX_CUSTOM_THEMES}", COL_DIM,
                 SW - overlay_w + _sx(20), saved_y)
     backup_y = saved_y + small_h + _sy(2)
-    render_text(renderer, app.fonts.ui_small, "Backup/Restore: see Settings", COL_DIM,
+    render_text(renderer, _subtitle_font, "Backup/Restore: see Settings", COL_DIM,
                 SW - overlay_w + _sx(20), backup_y)
     row_h = _row_h(app.fonts.ui_body)
     top = backup_y + small_h + _sy(14)
@@ -18303,7 +18042,7 @@ def draw_theme_menu(renderer, app):
         color = COL_BG if armed_warning else (COL_ACCENT if i == app.theme_menu_index else COL_TEXT)
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
 
 def draw_video_settings(renderer, app):
@@ -18317,7 +18056,21 @@ def draw_video_settings(renderer, app):
     draw_reader(renderer, app)
     overlay_w = _sx(320)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
-    render_text(renderer, app.fonts.ui_heading, "VIDEO SETTINGS", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.27.13 REAL BUG FIX (found via direct pixel-width measurement
+    # at the largest Font Size setting): "VIDEO SETTINGS" is long enough
+    # that it ran ~100px into the status-indicator zone added just above
+    # (v26.07.27.12) -- "MENU"/"THEMES" elsewhere clear with real margin
+    # at every Font Size (confirmed the same way), so only this heading
+    # needed it. Same _fit_text() ellipsis-truncate helper other fixed-
+    # width panels already use, against the same usable-width math
+    # draw_menu()'s own logo centering uses (overlay_w minus a left
+    # margin minus STATUS_INDICATORS_W).
+    _vs_heading_max_w = overlay_w - _sx(34) - STATUS_INDICATORS_W
+    _vs_heading = _fit_text(app.fonts.ui_heading, "VIDEO SETTINGS", _vs_heading_max_w)
+    render_text(renderer, app.fonts.ui_heading, _vs_heading, COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.27.12 (Feature #1 follow-up): same indicators added to
+    # draw_theme_menu() just above -- see that call's own comment.
+    _draw_status_indicators(renderer, app, SW - _sx(14), _sy(18))
     row_h = _row_h(app.fonts.ui_body)
     top = _sy(20) + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(18)
     item_max_w = overlay_w - _sx(40)
@@ -18328,8 +18081,8 @@ def draw_video_settings(renderer, app):
         item = VIDEO_SETTINGS_ITEMS[i]
         y = top + (i - start) * row_h
         label = item
-        if item == "Video Fill Screen":
-            label = f"Video Fill Screen: {'On' if app.video_fill_screen else 'Off'}"
+        if item == "Fill Screen":
+            label = f"Fill Screen: {'On' if app.video_fill_screen else 'Off'}"
         elif item == "Streaming Quality":
             label = f"Streaming Quality: {app.video_stream_quality} (downloads stay 480p)"
         elif item == "Video Player":
@@ -18339,7 +18092,7 @@ def draw_video_settings(renderer, app):
         color = COL_ACCENT if i == app.video_settings_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
 
 def draw_theme_select(renderer, app):
@@ -18366,7 +18119,15 @@ def draw_theme_select(renderer, app):
     for i in range(start, min(n_items, start + visible)):
         y = top + (i - start) * row_h
         label = themes[i]["name"]
-        if i >= len(THEMES):
+        # v26.07.28.20 (Kaleb's request: cycling clarity): the draft
+        # slot (if any) is always the LAST entry in all_themes() and
+        # was getting the same "(custom)" suffix as a real saved
+        # theme -- misleading, since it isn't one yet. "(unsaved)"
+        # here matches the same label Theme +/- and the Current:
+        # subtitle now show for the same slot.
+        if _DRAFT_THEME is not None and i == n_items - 1:
+            label += "  (unsaved)"
+        elif i >= len(THEMES):
             label += "  (custom)"
         if i == app.theme_select_index:
             _anim_y = y  # v26.07.17.05: glide removed, instant snap
@@ -18374,7 +18135,95 @@ def draw_theme_select(renderer, app):
         color = COL_ACCENT if i == app.theme_select_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
-    draw_hint(renderer, app.fonts, "UP/DOWN Preview   A Confirm   B Cancel")
+    draw_hint(renderer, app.fonts, "UP/DOWN Preview   A Confirm   B Back")
+
+
+def draw_recently_played(renderer, app):
+    """v26.07.27.31 (Kaleb's request): one combined list -- books,
+    video, audio, newest first -- reachable from the Library popup
+    menu, plus a "Clear History" row IN the list itself (Kaleb's own
+    explicit ask, not a separate popup/confirm elsewhere) as row 0,
+    same two-press arm/confirm convention Clear All Finished/Delete
+    Book/Delete Theme already use for a destructive bulk action. Same
+    windowed-scroll shape draw_download_browse_menu() uses (visible-
+    count computed from actual space, start clamped so the highlighted
+    row is kept roughly centered) since this can hold up to
+    RECENTS_MAX(50) rows, more than reliably fits on screen at every
+    Font Size."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    recents = load_recents()
+    render_text(renderer, app.fonts.ui_heading, f"HISTORY ({len(recents)}/{RECENTS_MAX})",
+                COL_ACCENT, _sx(20), _sy(16))
+    row_h = _row_h(app.fonts.ui_body)
+    top = _sy(70)
+    if not recents:
+        # v26.07.27.35 REAL BUG FIX (found during a requested font-size
+        # bug-check): this was a raw single-line render_text() with no
+        # wrapping at all, unlike every other multi-word message in
+        # this file -- measured the real pixel width at max Font Size
+        # and confirmed it genuinely overflowed (1084px vs a 720px
+        # screen), not a latent/theoretical risk like the Clear History
+        # label turned out to be. Now wraps through the same
+        # _wrap_hint_text_unbounded() helper other long messages use.
+        empty_lines = _wrap_hint_text_unbounded(
+            app.fonts.ui_body,
+            "Nothing played yet -- books, videos, and audio you open will show up here.",
+            SW - _sx(44))
+        body_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+        for i, line in enumerate(empty_lines):
+            render_text(renderer, app.fonts.ui_body, line, COL_DIM, _sx(24), top + i * body_h)
+        draw_hint(renderer, app.fonts, "B Back")
+        return
+
+    _KIND_LABEL = {"book": "Book", "video": "Video", "audio": "Audio"}
+    # row 0 is the synthetic "Clear History" action; real entries are
+    # recents[i-1] for row index i >= 1 -- see the button handler's own
+    # comment for why this shape (rather than a separate popup) was
+    # the more direct match for "add a clear history function in the
+    # list" as asked.
+    n_rows = len(recents) + 1
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.recents_index - visible // 2, max(0, n_rows - visible)))
+    for row_pos, i in enumerate(range(start, min(n_rows, start + visible))):
+        y = top + row_pos * row_h
+        selected = (i == app.recents_index)
+        if i == 0:
+            if app._recents_clear_armed:
+                label = f"Press A again to clear all {len(recents)} entries"
+                fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_WARNING)
+                color = COL_BG
+            else:
+                label = "Clear History"
+                if selected:
+                    fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+                color = COL_ACCENT if selected else COL_WARNING
+            # v26.07.27.35 BUG FIX (found during a requested font-size
+            # bug-check): this render_text call was the only one in the
+            # whole function with no _fit_text() safety net -- every
+            # sibling label below DOES wrap through it. Measured the
+            # real worst case (max Font Size, RECENTS_MAX(50) -- "Press
+            # A again to clear all 50 entries") and confirmed it
+            # doesn't actually overflow TODAY (511px used of 676px
+            # available), so this wasn't a live bug -- but it's a latent
+            # one with zero margin for error if RECENTS_MAX ever grows,
+            # and every other label in this file gets this protection
+            # as a matter of course, so the omission itself was the
+            # real inconsistency worth fixing regardless.
+            render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, SW - _sx(44)), color,
+                        _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+            continue
+        entry = recents[i - 1]
+        if selected:
+            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if selected else COL_TEXT
+        kind_tag = _KIND_LABEL.get(entry.get("kind"), "?")
+        rel = _relative_time(entry.get("ts", 0)) or ""
+        label = f"[{kind_tag}] {entry.get('title', '(untitled)')}"
+        if rel:
+            label += f"  ({rel})"
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, SW - _sx(44)),
+                    color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   LEFT/RIGHT Jump 10   A Open   B Back")
 
 
 def draw_bookmarks(renderer, app):
@@ -18409,7 +18258,7 @@ def draw_bookmarks(renderer, app):
         if armed:
             label = "Press X again to delete, or B to cancel"
         render_text(renderer, app.fonts.ui_body, label, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R/Y Jump 10   A Go   X Delete   B Cancel")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R/Y Jump 10   A Go   X Delete   B Back")
 
 
 def draw_storage(renderer, app):
@@ -18936,6 +18785,29 @@ def main():
     # used everywhere) has to change.
     SDL.SDL_RenderSetLogicalSize(renderer, SW, SH)
 
+    # v26.07.27.38 (Kaleb's request, video-transition-glitch follow-up):
+    # confirmed via Kaleb's real ffplay.log that the fb0 blank/unblank
+    # nudge genuinely RUNS every time ("fb0/blank=ok") but doesn't
+    # actually fix the leftover-frame glitch between queue videos --
+    # meaning the stale content likely isn't in the legacy fbdev
+    # framebuffer that sysfs path controls at all, but in a separate
+    # DRM/KMS hardware plane ffplay/mpv wrote to directly, which that
+    # blank toggle has no reach into. Logging which video driver SDL
+    # actually ended up using (kmsdrm/fbdev/x11/other) is the one fact
+    # that tells us which mechanism could actually reach whatever's
+    # leaving that leftover behind, instead of guessing at a third
+    # blind nudge. Cheap, safe, read-only -- can't affect behavior.
+    # RESOLVED (Kaleb, v26.07.29 session): the mpv-native-OSD-title
+    # approach (dropping PicoReader's own SDL title-card overlay in
+    # favor of mpv's --osd-playing-msg, see the "MAJOR FEATURES ADDED"
+    # entry higher up) sidestepped the glitch entirely rather than
+    # working around it -- confirmed fixed on real hardware.
+    _video_driver = SDL.SDL_GetCurrentVideoDriver()
+    _video_driver_str = _video_driver.decode("utf-8", errors="replace") if _video_driver else "(unknown)"
+    _boot_log(f"SDL video driver in use: {_video_driver_str}\n")
+    if native_video is not None:
+        native_video._ffplay_log(f"[diag] SDL video driver in use: {_video_driver_str}\n")
+
     if SDL.SDL_NumJoysticks() > 0:
         SDL.SDL_JoystickOpen(0)
 
@@ -19030,7 +18902,14 @@ def main():
             ok, msg = native_video.play_jw_video(
                 pending["url"], is_local=False, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B,
                 joy_l1=JOY_L, joy_r1=JOY_R, joy_l2=JOY_L2, joy_r2=JOY_R2,
-                joy_y=JOY_Y, joy_x=JOY_X, player_pref=app.video_player_pref,
+                joy_y=JOY_Y, joy_x=JOY_X,
+                # v26.07.29.14 BUG FIX: same missing joy_start/joy_select
+                # gap as play_video_item()'s call site just above (see
+                # that comment for the full root cause) -- this is the
+                # in-book-link video path, the other of the two call
+                # sites that had never gotten them.
+                joy_start=JOY_START, joy_select=JOY_BACK,
+                player_pref=app.video_player_pref,
                 fill_screen=app.video_fill_screen, screen_w=DEV_W, screen_h=DEV_H)
             native_video._ffplay_log(
                 f"[diag] in-book video returned (main thread): ok={ok} msg={msg!r} "
@@ -19063,6 +18942,7 @@ def main():
                 # chance to persist any debounced-but-unwritten setting.
                 flush_settings_now()
                 flush_pin_finished_now()  # v26.07.17.20: same reasoning
+                flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                 running = False
                 break
             elif etype == SDL_KEYDOWN_EV:
@@ -19072,6 +18952,7 @@ def main():
                 if k == SDLK_ESCAPE:
                     flush_settings_now()  # v26.07.17.19: same reasoning as SDL_QUIT_EV above
                     flush_pin_finished_now()  # v26.07.17.20
+                    flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                     running = False
                 elif k == SDLK_UP: btn = "UP"
                 elif k == SDLK_DOWN: btn = "DOWN"
@@ -19181,6 +19062,7 @@ def main():
                     # happens even if something below it hiccups.
                     flush_settings_now()
                     flush_pin_finished_now()  # v26.07.17.20
+                    flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                     # v26.07.10.04: brief exit toast (Kaleb's request)
                     # instead of the window just vanishing the instant B
                     # is pressed.
@@ -19197,31 +19079,42 @@ def main():
                     # of draw_reader() -- see draw_menu()'s own first
                     # line -- so showing just the reader underneath,
                     # without the now-closing popup, is the right visual).
-                    app.set_status(f"Exiting Pico Reader {FACE_DONE}", duration=EXIT_TOAST_SECONDS)
+                    # v26.07.27.02: set_status() moved to AFTER the
+                    # background draw call below (was here) -- see that
+                    # comment for why calling it before the background
+                    # draw caused the real "toast shows twice stacked" bug.
                     SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
                     SDL.SDL_RenderClear(renderer)
-                    # v26.07.24.07 BUG FIX (Kaleb's request: "make sure
-                    # the exit toast shows for Exit App" -- prompted a
-                    # re-check after adding "Exit App" to the two new
-                    # download-flow popups). This used to be a plain
-                    # binary check (SCREEN_LIBRARY vs "else, assume
-                    # reader") -- true when only Library's B-quit and
-                    # the Reader menu's Exit App existed, but "Exit App"
-                    # in SCREEN_DOWNLOAD_BROWSE_MENU/SCREEN_DOWNLOAD_
-                    # QUICK_MENU (v26.07.24.01/.05) never resets
-                    # app.screen before setting quit_requested -- it
-                    # stays on whichever download popup fired it, which
-                    # isn't SCREEN_LIBRARY, so it was silently falling
-                    # into the "else: draw_reader()" branch and showing
-                    # a stale/wrong reader frame behind the toast
-                    # instead of the actual screen being exited from.
-                    # Same "show just the underlying screen, without
-                    # the now-closing popup" convention as the existing
-                    # SCREEN_MENU case just below (draw_reader() only,
-                    # skipping draw_menu()'s own overlay) -- draws each
-                    # popup's OWN underlying screen directly rather than
-                    # the popup-plus-overlay draw_download_browse_menu()/
-                    # draw_download_quick_menu() functions.
+                    # v26.07.27.02 REAL BUG FIX (Kaleb's report: "toast
+                    # sometimes shows twice stacked"). Root cause: draw_
+                    # library()/draw_reader()/draw_download_browse() (all
+                    # three of the backgrounds this block can pick) ALSO
+                    # draw the status bar themselves, as part of their own
+                    # normal per-frame code (same "if app.status_msg and
+                    # time.time() < app.status_until: _draw_status_bar(...)"
+                    # pattern every screen uses) -- and since set_status()
+                    # for the exit toast was called BEFORE this dispatch,
+                    # that internal draw was ALSO rendering the exact same
+                    # "Exiting Pico Reader" text, at the exact same
+                    # position, underneath the forced-alpha redraw a few
+                    # lines below. Two overlapping renders of the same
+                    # message is exactly what "stacked twice" describes --
+                    # the v26.07.16.34 fix below only ever forced the
+                    # SECOND (outer) draw's alpha to 255 without realizing
+                    # a first (inner) draw of the same text already
+                    # happened. Fixed by blanking app.status_msg for the
+                    # duration of this background draw call ONLY (nothing
+                    # else reads status_msg between here and the
+                    # set_status() call right after), so the internal
+                    # per-screen status-bar draw has nothing to render
+                    # this one frame; the real exit text is set
+                    # immediately after, for our own single forced draw
+                    # only. draw_download_video_sources()/
+                    # draw_download_audio_sources() never had this problem
+                    # to begin with (confirmed: neither draws a status bar
+                    # internally at all) -- this fix is a safe no-op for
+                    # those two, not a risk of a NEW regression there.
+                    app.status_msg = None
                     if app.screen == SCREEN_LIBRARY:
                         draw_library(renderer, app)
                     elif app.screen == SCREEN_DOWNLOAD_BROWSE_MENU:
@@ -19237,32 +19130,27 @@ def main():
                             draw_download_video_series(renderer, app)
                         elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
                             draw_download_audio_sources(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_GROUP:
+                            draw_download_audio_group(renderer, app)
                         elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
                             draw_download_audio_books(renderer, app)
+                        elif app.dl_quick_menu_return_screen == SCREEN_DOWNLOAD_AUDIO_ISSUES:
+                            draw_download_audio_issues(renderer, app)
                         else:
                             draw_reader(renderer, app)  # defensive fallback
                     else:
                         draw_reader(renderer, app)
+                    app.set_status(f"Exiting Pico Reader {FACE_DONE}", duration=EXIT_TOAST_SECONDS)
                     # v26.07.16.34 BUG FIX (Kaleb's report -- "no text in
-                    # the overlay" when exiting): draw_library()/
-                    # draw_reader() above draw the status bar themselves,
-                    # but through the NORMAL per-frame path -- alpha=
-                    # app.status_alpha(), which fades in over 120ms from
-                    # the moment set_status() was called. set_status()
-                    # was called on the SAME line just above, so at the
-                    # instant this single frame renders, elapsed time is
-                    # ~0 and status_alpha() returns ~0 -- the text was
-                    # rendering fully transparent the entire time, not
-                    # missing, just invisible. Same root cause already
-                    # fixed once for the large-page loading toast (see
-                    # the alpha=255-forced comment a few hundred lines
-                    # up in this file) but never applied here since this
-                    # call site didn't exist yet at the time of that fix.
-                    # Redraw the status bar on top, forcing alpha=255 --
-                    # this IS a single forced frame right before a
-                    # blocking SDL_Delay, not part of the normal redraw
-                    # loop, so there's no later frame for a fade-in to
-                    # complete on.
+                    # the overlay" when exiting): the NORMAL per-frame
+                    # status-bar alpha (app.status_alpha()) fades in over
+                    # 120ms from the moment set_status() was called --
+                    # since this whole block is a single forced frame with
+                    # no later frame for that fade-in to complete on,
+                    # drawing at the real fade alpha here would render
+                    # fully (or almost fully) transparent. Force alpha=255
+                    # for this one draw instead -- the only status-bar
+                    # draw for this frame now, per the fix just above.
                     _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
                                       SH - _sy(hint_height(app.fonts)), alpha=255)
                     SDL.SDL_RenderPresent(renderer)
@@ -19420,12 +19308,16 @@ def main():
                 draw_toc(renderer, app)
             elif app.screen == SCREEN_BOOKMARKS:
                 draw_bookmarks(renderer, app)
+            elif app.screen == SCREEN_RECENTLY_PLAYED:
+                draw_recently_played(renderer, app)
             elif app.screen == SCREEN_STORAGE:
                 draw_storage(renderer, app)
             elif app.screen == SCREEN_LIBRARY_MENU:
                 draw_library_menu(renderer, app)
             elif app.screen == SCREEN_LIBRARY_DELETE_FOLDER:
                 draw_library_delete_folder(renderer, app)
+            elif app.screen == SCREEN_LIBRARY_MOVE_FOLDER:
+                draw_library_move_folder(renderer, app)
             elif app.screen == SCREEN_THEME_MENU:
                 draw_theme_menu(renderer, app)
             elif app.screen == SCREEN_VIDEO_SETTINGS:
@@ -19442,8 +19334,12 @@ def main():
                 draw_download_video_sources(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
                 draw_download_audio_sources(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_AUDIO_GROUP:
+                draw_download_audio_group(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
                 draw_download_audio_books(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_AUDIO_ISSUES:
+                draw_download_audio_issues(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_VIDEO_SERIES:
                 draw_download_video_series(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
@@ -19479,6 +19375,8 @@ def main():
                 draw_licenses(renderer, app)
             elif app.screen == SCREEN_HELP:
                 draw_app_help(renderer, app)
+            elif app.screen == SCREEN_AV_HELP:
+                draw_av_help(renderer, app)
             elif app.screen == SCREEN_IMAGE_VIEW:
                 draw_image_view(renderer, app)
 
@@ -19501,10 +19399,20 @@ def main():
     if app.current_book_path:
         app.save_progress()
         flush_pin_finished_now()  # v26.07.17.20: book-close checkpoint
+        flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
     SDL.SDL_Quit()
 
 
 def handle_button(app, btn, body_h_px=None, renderer=None):
+    # v26.07.28.20 (Kaleb's request: cycling clarity -- Theme +/- now
+    # also reads _DRAFT_THEME/_DRAFT_REPLACE_NAME to label an unsaved
+    # regenerate draft, on top of the SCREEN_THEME_SELECT branch further
+    # down that already needed to WRITE them). Python requires a
+    # function-wide `global` declaration to appear before ANY use of
+    # the name in that function, not just before the first assignment --
+    # declared once here, at the top, rather than repeated/scattered at
+    # each branch that touches them.
+    global _DRAFT_THEME, _DRAFT_REPLACE_NAME
     # v26.07.16.01: single choke point for UI sound effects -- see
     # SND_BTN_MAP's docstring (near SoundEngine) for why this is a flat
     # button->sound table rather than instrumented per screen branch.
@@ -19527,7 +19435,43 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         return
 
     if app.screen == SCREEN_LIBRARY:
-        n = len(app.books)
+        # v26.07.27.43 (Kaleb's request: real folder navigation, like a
+        # file manager). Combined index space.
+        # v26.07.28.09 BUG FIX (Kaleb's report: pinned books were
+        # showing BELOW subfolders in Folders filter -- every other
+        # filter already puts pinned first via sort_library(), but
+        # subfolder rows always drew before ANY book row here,
+        # including pinned ones). Combined index is now three segments
+        # in order: pinned books, subfolder rows, everything else --
+        # n_pinned is 0 for every other filter (nothing there is ever
+        # split out separately), so this is a pure no-op everywhere
+        # except Folders; sort_library() already guarantees app.books'
+        # first n_pinned entries ARE the pinned ones, in order, so no
+        # extra sorting is needed here, just correct index math.
+        n_subfolders = len(app.lib_subfolders)
+        n_pinned = sum(1 for b in app.books if b["relpath"] in app.pinned)
+        n = n_subfolders + len(app.books)  # total row count is unaffected by row ORDER
+        # v26.07.28.02: gated on Filter == "folders" too -- lib_current_folder
+        # is deliberately preserved across filter switches (so switching
+        # back to Folders returns to where you were browsing), but B
+        # must only mean "go up a level" while Folders is the active
+        # filter; every other filter is the flat whole-library view, so
+        # B there always means the normal quit-app action.
+        in_folder = app.lib_filter_mode == "folders" and bool(app.lib_current_folder)
+
+        def _selected_is_folder():
+            return n_pinned <= app.lib_index < n_pinned + n_subfolders
+
+        def _selected_book():
+            idx = app.lib_index
+            if idx < n_pinned:
+                return app.books[idx] if idx < len(app.books) else None
+            if idx >= n_pinned + n_subfolders:
+                bi = idx - n_subfolders
+                if 0 <= bi < len(app.books):
+                    return app.books[bi]
+            return None
+
         if btn == "UP":
             app.lib_index = (app.lib_index - 1) % n if n else 0
         elif btn == "DOWN":
@@ -19558,29 +19502,105 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # capture whichever book was highlighted right now -- Delete
             # Book in the menu always targets this, not whatever's
             # highlighted once inside the menu (there's no book list
-            # shown there)
-            app._menu_target_book = app.books[app.lib_index] if app.books else None
+            # shown there). v26.07.27.43: None if a folder row is
+            # currently highlighted instead of a book -- Delete Book's
+            # own handler already no-ops gracefully on a missing target,
+            # same as an empty library.
+            app._menu_target_book = _selected_book()
             app._menu_delete_armed = False
             app.screen = SCREEN_LIBRARY_MENU
             app.refresh_status_indicators()
-        elif btn == "A" and app.books:
-            app.open_book(app.books[app.lib_index])
-        elif btn == "SELECT" and app.books:
-            # v0.1.117: SELECT used to be book-delete (press twice to
-            # confirm) -- moved to a "Delete Book" entry in the Library
-            # Menu (opened via X, see above) so SELECT could become the
-            # Finished/Unfinished marker Kaleb asked for, matching X/pin's
-            # (now START/pin's) one-press toggle feel since marking a
-            # book finished isn't destructive and doesn't need a confirm
-            # step.
-            app.toggle_finished(app.books[app.lib_index])
+        elif btn == "A" and n:
+            if _selected_is_folder():
+                # v26.07.27.43: navigate INTO the highlighted subfolder --
+                # same os.path.join()/os.sep convention scan_library()
+                # already uses for the "folder" field on each book, so
+                # this always matches what a book's own folder field
+                # says once you're inside it.
+                # v26.07.28.09: subfolder rows now start AFTER the
+                # pinned-book segment (see _selected_is_folder()'s own
+                # comment above) -- offset by n_pinned, not a bare index.
+                folder_name = app.lib_subfolders[app.lib_index - n_pinned]
+                app.lib_current_folder = (os.path.join(app.lib_current_folder, folder_name)
+                                           if app.lib_current_folder else folder_name)
+                app.lib_index = 0
+                # v26.07.28.10: a selection made in one folder shouldn't
+                # silently carry into a completely different one -- see
+                # self.lib_selected's own docstring in App.__init__.
+                app.lib_selected.clear()
+                app._apply_library_view()
+            else:
+                book = _selected_book()
+                if book:
+                    app.open_book(book)
+        elif btn == "R2":
+            # v26.07.28.10 (Kaleb's request: multi-select for Move to
+            # Folder -- decided in favor of a direct in-list toggle over
+            # a Library-Menu-gated "enter multi-select mode" step, since
+            # the latter would add a whole extra mode flag with its own
+            # clearing/edge-case questions on top of the exact same
+            # underlying selection set, for zero reduction in actual
+            # complexity -- plus more steps for what should be a fast,
+            # frequent action). No-ops on a folder row (folders aren't
+            # move targets themselves) and on an empty list, same guard
+            # shape as every other book-only action here.
+            book = _selected_book()
+            if book:
+                key = book["relpath"]
+                if key in app.lib_selected:
+                    app.lib_selected.discard(key)
+                else:
+                    app.lib_selected.add(key)
+        elif btn == "SELECT":
+            # v26.07.27.25 (Kaleb's request, download-button-consistency
+            # follow-up): SELECT here used to be the Finished/Unfinished
+            # toggle (v0.1.117), but "Mark Finished/Unfinished" already
+            # exists as its own Library Menu row (X -> Mark Finished/
+            # Unfinished) and does the exact same thing -- SELECT was a
+            # pure redundant shortcut, not a unique feature, so freeing
+            # it up cost nothing. Filter now gets the same "quick one-
+            # press cycle" hotkey treatment Y already gives Sort, instead
+            # of only being reachable through X -> Menu -> Filter: Cycle.
+            #
+            # v26.07.28.06 BUG FIX (Kaleb's report: SELECT wasn't
+            # reaching Folder mode). Root cause: this required
+            # `app.books` to be non-empty just to register the
+            # keypress at all -- Y's own Sort-cycle right above has NO
+            # such guard. Any filter with zero matching items (Finished
+            # with nothing finished yet, Pinned with nothing pinned, or
+            # Folders while browsing a subfolder that only has
+            # sub-subfolders and no direct books) silently ate every
+            # SELECT press, trapping the cycle right there with no way
+            # to advance to whatever came next -- which explains landing
+            # on Folders specifically, since it's the last entry in
+            # LIBRARY_FILTER_MODES and Pinned (right before it) is
+            # exactly the kind of filter that's often legitimately
+            # empty. Guard removed entirely, matching Y's unconditional
+            # pattern -- cycling the FILTER should never depend on
+            # whether the CURRENT filter happens to have any items.
+            app.cycle_filter_mode()
+            app.set_status(f"Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}")
         elif btn == "B":
-            app.play_sound("error")  # v26.07.16.02 (Kaleb's request):
-                                      # the "wonk" sound doubles as the
-                                      # exit-app cue -- distinct/final-
-                                      # feeling without needing a new
-                                      # dedicated sound.
-            app.quit_requested = True
+            if in_folder:
+                # v26.07.27.43: go UP one folder level instead of
+                # quitting, same "Back means go up, not out" convention
+                # every other screen in this app already follows -- only
+                # the ROOT level still means Quit (unchanged below).
+                parent = os.path.dirname(app.lib_current_folder.rstrip(os.sep))
+                app.lib_current_folder = parent
+                app.lib_index = 0
+                # v26.07.28.10: same reasoning as the A/folder-enter
+                # branch above -- selection shouldn't carry between
+                # different folders.
+                app.lib_selected.clear()
+                app._apply_library_view()
+            else:
+                app.play_sound("error")  # v26.07.16.02 (Kaleb's request):
+                                          # the "wonk" sound doubles as the
+                                          # exit-app cue -- distinct/final-
+                                          # feeling without needing a new
+                                          # dedicated sound.
+                app.quit_requested = True
         elif btn == "L2" and DOWNLOAD_PLUGINS:
             if len(DOWNLOAD_PLUGINS) == 1:
                 app.open_downloader(DOWNLOAD_PLUGINS[0])
@@ -19609,11 +19629,15 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.set_status(f"Font size: {pt}pt (largest)")
             else:
                 app.set_status(f"Font size: {pt}pt")
-        elif btn == "START" and app.books:
+        elif btn == "START":
             # v26.07.12.05: swapped with X -- see X's handler above for
             # the full reasoning. START now pins/unpins, same one-press
             # toggle feel it always had, just moved off X.
-            app.toggle_pin(app.books[app.lib_index])
+            # v26.07.27.43: guarded to only act on an actual highlighted
+            # book -- pinning doesn't mean anything for a folder row.
+            book = _selected_book()
+            if book:
+                app.toggle_pin(book)
 
     elif app.screen == SCREEN_LIBRARY_MENU:
         n = len(LIBRARY_MENU_ITEMS)
@@ -19677,6 +19701,11 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 # stays open, same as Theme +/- -- lets Kaleb cycle
                 # through All/Unfinished/Finished and see the label
                 # update without re-opening the menu each time
+            elif choice == "History":
+                app.recents_index = 0
+                app._recents_clear_armed = False
+                app._recents_return_screen = SCREEN_LIBRARY_MENU
+                app.screen = SCREEN_RECENTLY_PLAYED
             elif choice == "Clear All Finished":
                 if len(app.finished) == 0:
                     pass  # nothing to clear -- no-op, same spirit as
@@ -19690,6 +19719,18 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     # seeing the count clear
                 else:
                     app._menu_clear_finished_armed = True
+            elif choice == "Move to Folder":
+                # v26.07.28.10 (Kaleb's request: multi-select). A batch
+                # selection is enough to proceed even if nothing happens
+                # to be highlighted right now (e.g. the cursor drifted
+                # onto a folder row after selecting some books) --
+                # _menu_target_book alone is still required for the
+                # single-book fallback path, unchanged.
+                if app.lib_selected or app._menu_target_book is not None:
+                    app.lib_move_folder_index = 0
+                    app.screen = SCREEN_LIBRARY_MOVE_FOLDER
+                # else: nothing selected and nothing was highlighted --
+                # no-op, same as before
             elif choice == "Delete Book":
                 if app._menu_target_book is None:
                     pass  # nothing was highlighted when START was pressed
@@ -19701,7 +19742,16 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                                                 # image cache, anchor cache,
                                                 # and pin/finished entries
                                                 # -- see delete_book()
-                        app.lib_index = max(0, min(app.lib_index, len(app.books) - 1))
+                        # v26.07.28.11 BUG FIX (Kaleb's request, bug-check
+                        # follow-up): same class of bug as Delete Folder's
+                        # own v26.07.28.05 fix -- this clamped against
+                        # len(app.books) alone, ignoring subfolder rows
+                        # that can also be showing (Folders filter). Not
+                        # a crash, but the cursor could jump much further
+                        # back than actually necessary after deleting a
+                        # book while subfolders were also on screen.
+                        app.lib_index = max(0, min(app.lib_index,
+                                                    len(app.lib_subfolders) + len(app.books) - 1))
                         app.set_status(f'Deleted "{title}"')
                     else:
                         app.set_status(f'Could not delete "{title}"')
@@ -19721,6 +19771,14 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 # folders already are (sanitize_folder_name(), reusing
                 # jw_fetch.py's shared utility) so a typed name can
                 # never contain a character FAT32/exFAT would reject.
+                #
+                # v26.07.27.43 (Kaleb's request: create INSIDE the
+                # folder currently being browsed, not always at the
+                # Library root -- part of the real folder-navigation
+                # feature). Explicitly re-applies the library view
+                # after creating so the new (sub)folder shows up
+                # immediately as a navigable row, without needing to
+                # leave and re-enter.
                 def _on_new_folder_confirm(app, value):
                     name = (value or "").strip()
                     if not name:
@@ -19728,7 +19786,17 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                         return
                     sanitizer = getattr(JW_PLUGIN, "sanitize_folder_name", None)
                     safe_name = sanitizer(name) if sanitizer else name
-                    target = os.path.join(LIBRARY_DIR, safe_name)
+                    # v26.07.28.03 BUG FIX (Kaleb's request, bug-check
+                    # follow-up): lib_current_folder is preserved across
+                    # filter switches, but it must only be used to place
+                    # a new folder while Folders is the active filter --
+                    # otherwise the folder gets created somewhere with
+                    # no breadcrumb/subfolder row on screen to show it,
+                    # which reads as "nothing happened".
+                    _new_folder_scope = app.lib_current_folder if app.lib_filter_mode == "folders" else ""
+                    parent_dir = (os.path.join(LIBRARY_DIR, _new_folder_scope)
+                                  if _new_folder_scope else LIBRARY_DIR)
+                    target = os.path.join(parent_dir, safe_name)
                     already_existed = os.path.isdir(target)
                     try:
                         os.makedirs(target, exist_ok=True)
@@ -19743,6 +19811,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                             app.set_status(f'"{safe_name}" already exists')
                         else:
                             app.set_status(f'Created folder "{safe_name}"')
+                            app._apply_library_view()
                     except OSError as e:
                         app.set_status(f"Couldn't create folder: {e}")
                 app.open_text_entry("New Folder Name", "", _on_new_folder_confirm,
@@ -19760,6 +19829,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                                        # but reset explicitly on entry too
                                        # rather than relying on that alone
                 app.screen = SCREEN_THEME_MENU
+                app.refresh_status_indicators()
             elif choice == "Download Books" and DOWNLOAD_PLUGINS:
                 if len(DOWNLOAD_PLUGINS) == 1:
                     app.open_downloader(DOWNLOAD_PLUGINS[0])
@@ -19784,7 +19854,15 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         # books. A non-empty folder just gets a clear status message
         # instead of being force-deleted -- "keep it simple" per
         # Kaleb's own framing of this feature, no bulk-move-books flow.
-        folders = list_library_folders()
+        #
+        # v26.07.28.03 BUG FIX (Kaleb's request, bug-check follow-up):
+        # gated on Filter == "folders" too -- see the matching comment
+        # on the draw-side computation of this same value, right above
+        # draw_library_delete_folder()'s picker loop.
+        _delete_folder_scope = app.lib_current_folder if app.lib_filter_mode == "folders" else ""
+        _delete_folder_base = (os.path.join(LIBRARY_DIR, _delete_folder_scope)
+                                if _delete_folder_scope else LIBRARY_DIR)
+        folders = list_library_folders(_delete_folder_base)
         n = len(folders)
         if btn == "UP":
             app.lib_delete_folder_index = (app.lib_delete_folder_index - 1) % n if n else 0
@@ -19797,21 +19875,151 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.screen = SCREEN_LIBRARY_MENU
         elif btn == "A" and n:
             name = folders[app.lib_delete_folder_index]
-            folder_path = os.path.join(LIBRARY_DIR, name)
+            folder_path = os.path.join(_delete_folder_base, name)
             if app._menu_delete_folder_armed:
                 try:
-                    if os.listdir(folder_path):
-                        app.set_status(f'"{name}" isn\'t empty -- move or delete its books first')
+                    contents = os.listdir(folder_path)
+                    if contents:
+                        # v26.07.28.17 (Kaleb's request: make this clear
+                        # to understand). Used to always say "move or
+                        # delete its books first" even when the folder
+                        # had no books at all -- just an empty subfolder
+                        # sitting inside it, confirmed as a real case by
+                        # direct test. Classifies what's ACTUALLY in
+                        # there (direct children only, matching what
+                        # os.listdir() and this whole check already look
+                        # at -- doesn't need to recurse further since
+                        # the message only needs to name what's one
+                        # level down) so the message matches reality
+                        # either way.
+                        has_books = any(c.lower().endswith(".epub") for c in contents)
+                        has_subfolders = any(os.path.isdir(os.path.join(folder_path, c)) for c in contents)
+                        if has_books and has_subfolders:
+                            detail = "move or delete its books and subfolders first"
+                        elif has_books:
+                            detail = "move or delete its books first"
+                        elif has_subfolders:
+                            detail = "clear out its subfolder(s) first"
+                        else:
+                            detail = "clear out its contents first"  # non-epub files
+                        app.set_status(f'"{name}" isn\'t empty -- {detail}')
                     else:
                         os.rmdir(folder_path)
                         app.set_status(f'Deleted folder "{name}"')
                         app.lib_delete_folder_index = max(
-                            0, min(app.lib_delete_folder_index, len(list_library_folders()) - 1))
+                            0, min(app.lib_delete_folder_index,
+                                   len(list_library_folders(_delete_folder_base)) - 1))
+                        app._apply_library_view()
+                        # v26.07.28.05 BUG FIX (Kaleb's request, bug-check
+                        # follow-up): the picker's OWN index just above
+                        # was already clamped, but the underlying Library
+                        # screen's app.lib_index (subfolder+book combined
+                        # index) never was -- deleting a folder can shrink
+                        # that list too (one fewer subfolder row), and B
+                        # from here only returns to the Library Menu, not
+                        # straight to Library, so this was never caught
+                        # by Delete Book's own clamp (a different code
+                        # path). Not a crash (draw_library()/handle_button()
+                        # both tolerate an out-of-range index and self-heal
+                        # on the next D-pad press), but the highlight could
+                        # sit invisibly on a row that no longer exists
+                        # until then -- same symptom class as the
+                        # `_lib_menu_hidden` ghost-row bugs elsewhere in
+                        # this file, just via a different trigger.
+                        n_sub_after = len(app.lib_subfolders)
+                        total_after = n_sub_after + len(app.books)
+                        app.lib_index = max(0, min(app.lib_index, total_after - 1))
                 except OSError as e:
                     app.set_status(f"Couldn't delete folder: {e}")
                 app._menu_delete_folder_armed = False
             else:
                 app._menu_delete_folder_armed = True
+
+    elif app.screen == SCREEN_LIBRARY_MOVE_FOLDER:
+        # v26.07.27.44 (Kaleb's request: "Move to Folder"). No armed/
+        # confirm state -- moving isn't destructive (nothing is lost),
+        # same reasoning New Folder gets a single press. Lists every
+        # folder at every depth (list_all_library_folders()) plus an
+        # explicit "(Library Root)" option at index 0.
+        options = ["(Library Root)"] + list_all_library_folders()
+        n = len(options)
+        if btn == "UP":
+            app.lib_move_folder_index = (app.lib_move_folder_index - 1) % n if n else 0
+        elif btn == "DOWN":
+            app.lib_move_folder_index = (app.lib_move_folder_index + 1) % n if n else 0
+        elif btn == "B":
+            app.screen = SCREEN_LIBRARY_MENU
+        elif btn == "A" and n and (app.lib_selected or app._menu_target_book):
+            dest_folder = "" if app.lib_move_folder_index == 0 else options[app.lib_move_folder_index]
+            dest_label = "Library Root" if not dest_folder else dest_folder
+            if app.lib_selected:
+                # v26.07.28.10 (Kaleb's request: multi-select). Resolve
+                # via app._all_books (the full unfiltered scan), not
+                # app.books (whatever's currently filtered/scoped) --
+                # selection is cleared on every folder/filter change
+                # (see self.lib_selected's own docstring) so in practice
+                # these should always already be a subset of app.books
+                # too, but resolving against the full scan is the more
+                # robust source of truth and costs nothing extra.
+                by_relpath = {b["relpath"]: b for b in app._all_books}
+                moved, failed = [], []
+                succeeded_relpaths = []
+                for relpath in list(app.lib_selected):
+                    book = by_relpath.get(relpath)
+                    if book is None:
+                        continue  # shouldn't happen, but don't crash a whole batch over one stale entry
+                    ok, result = app.move_book(book, dest_folder)
+                    if ok:
+                        moved.append((book["title"], result))
+                        # v26.07.28.22: result IS the NEW relpath on
+                        # success -- move_book() ALREADY migrated this
+                        # book's entry in self.lib_selected internally
+                        # (old relpath -> new, see its own v26.07.28.11
+                        # fix), so discarding by the OLD `relpath` below
+                        # would be a no-op (it's already gone, replaced
+                        # by `result`) and leave the new one stranded in
+                        # the selection after a supposedly-cleared
+                        # successful move -- confirmed by direct test.
+                        succeeded_relpaths.append(result)
+                    else:
+                        failed.append((book["title"], result))
+                app.refresh_library()
+                # v26.07.28.22 BUG FIX (Kaleb's request: re-audit heavily-
+                # touched areas). This used to clear() the WHOLE
+                # selection regardless of outcome -- a book that failed
+                # to move (e.g. a name collision at the destination)
+                # lost its selection right along with the ones that
+                # actually succeeded, so retrying just the failed book
+                # with a different destination meant re-selecting it
+                # from scratch. Only successfully-moved relpaths are
+                # discarded now; a failed book stays selected.
+                for _rp in succeeded_relpaths:
+                    app.lib_selected.discard(_rp)
+                app.lib_index = max(0, min(app.lib_index, len(app.lib_subfolders) + len(app.books) - 1))
+                app.screen = SCREEN_LIBRARY
+                # v26.07.28.10: honest partial-failure reporting rather
+                # than a blanket "Moved N books" that hides a collision
+                # -- same "tell the truth about what happened" standard
+                # delete_book()/move_book() itself already holds to.
+                if not failed:
+                    app.set_status(f"Moved {len(moved)} book{'s' if len(moved) != 1 else ''} to {dest_label}")
+                elif not moved:
+                    app.set_status(f"Couldn't move any books: {failed[0][1]}")
+                else:
+                    app.set_status(f"Moved {len(moved)}, {len(failed)} failed "
+                                    f"(\"{failed[0][0]}\": {failed[0][1]})")
+            else:
+                book = app._menu_target_book
+                title = book["title"]
+                ok, result = app.move_book(book, dest_folder)
+                if ok:
+                    app.refresh_library()
+                    app.set_status(f'Moved "{title}" to {dest_label}')
+                    app._menu_target_book = None
+                    app.lib_index = max(0, min(app.lib_index, len(app.lib_subfolders) + len(app.books) - 1))
+                    app.screen = SCREEN_LIBRARY
+                else:
+                    app.set_status(f"Couldn't move: {result}")
 
     elif app.screen == SCREEN_THEME_MENU:
         n = len(THEME_MENU_ITEMS)
@@ -19838,14 +20046,29 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 apply_theme(new_index)
                 save_settings({"theme_index": new_index})
                 app._page_cache_key = None
-                app.set_status(f"Theme: {themes[new_index]['name']}")
+                # v26.07.28.20 (Kaleb's request: cycling clarity -- an
+                # unsaved Regenerate Theme draft used to cycle through
+                # Theme +/- exactly like a real permanent saved theme,
+                # with nothing distinguishing it, indefinitely, until
+                # explicitly saved or escaped via Select Theme. Labeled
+                # here instead of auto-clearing on cycle-past (Kaleb's
+                # own choice between the two) -- same suffix convention
+                # draw_theme_select()'s list already uses for "(custom)".
+                _label = themes[new_index]['name']
+                if _DRAFT_THEME is not None and new_index == len(themes) - 1:
+                    _label += " (unsaved)"
+                app.set_status(f"Theme: {_label}")
             elif choice == "Theme -":
                 themes = all_themes()
                 new_index = (THEME_INDEX - 1) % len(themes)
                 apply_theme(new_index)
                 save_settings({"theme_index": new_index})
                 app._page_cache_key = None
-                app.set_status(f"Theme: {themes[new_index]['name']}")
+                # v26.07.28.20: same "(unsaved)" label as Theme + above.
+                _label = themes[new_index]['name']
+                if _DRAFT_THEME is not None and new_index == len(themes) - 1:
+                    _label += " (unsaved)"
+                app.set_status(f"Theme: {_label}")
             elif choice == "Reset to Default":
                 apply_theme(0)
                 save_settings({"theme_index": 0})
@@ -19886,7 +20109,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.refresh_status_indicators()
         elif btn == "A":
             choice = VIDEO_SETTINGS_ITEMS[app.video_settings_index]
-            if choice == "Video Fill Screen":
+            if choice == "Fill Screen":
                 app.video_fill_screen = not app.video_fill_screen
                 save_settings({"video_fill_screen": app.video_fill_screen})
                 # stays open, same pattern as Theme +/- above
@@ -19926,6 +20149,28 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.screen = SCREEN_THEME_MENU
         elif btn == "A":
             # Confirm -- already applied live by UP/DOWN above, just persist.
+            # v26.07.28.19 BUG FIX (Kaleb's request: bug-check on the
+            # Theme menu). _DRAFT_THEME/_DRAFT_REPLACE_NAME (Regenerate
+            # Theme's pending-preview state) were never cleared by
+            # picking a DIFFERENT theme here -- confirmed reachable: an
+            # abandoned regenerate draft (left pending by pressing B out
+            # of the Theme Menu, or just navigating to Select Theme
+            # instead of finishing it) would silently keep being what
+            # the NEXT "Regenerate Theme" press re-rolled, regardless of
+            # which theme is actually showing as current, since
+            # regenerate_theme()'s own "already pending" check only
+            # looks at _DRAFT_REPLACE_NAME being non-None, not at
+            # whether THEME_INDEX still agrees with it. Confirming a
+            # DIFFERENT theme here is an unambiguous "I'm done with
+            # that draft" signal -- global draft state is invalidated
+            # unless the person is re-confirming the draft slot itself
+            # (reachable by scrolling to it in this same picker), in
+            # which case it's still the same theme they were already
+            # regenerating and nothing should be lost.
+            draft_idx = len(themes) - 1 if _DRAFT_THEME is not None else -1
+            if app.theme_select_index != draft_idx:
+                _DRAFT_THEME = None
+                _DRAFT_REPLACE_NAME = None
             save_settings({"theme_index": THEME_INDEX})
             app.set_status(f"Theme: {themes[app.theme_select_index]['name']}")
             app.screen = SCREEN_THEME_MENU
@@ -19941,6 +20186,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_SOURCES
             app.download_quick_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
         elif app.font_size_hotkey(btn):
             pass
 
@@ -20049,6 +20295,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_CATEGORIES
             app.download_quick_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
         elif app.font_size_hotkey(btn):
             pass
 
@@ -20119,6 +20366,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
             app.download_quick_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
         elif app.font_size_hotkey(btn):
             pass
 
@@ -20163,6 +20411,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_VIDEO_SERIES
             app.download_quick_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
         elif app.font_size_hotkey(btn):
             pass
 
@@ -20208,6 +20457,23 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                     app.dl_plugin = JW_PLUGIN
                     app.dl_is_audio = True
                     app._pending_audio_source = None
+                    app._pending_audio_group_source = None  # v26.07.30.16:
+                                          # Search Audio is reached
+                                          # directly from SCREEN_DOWNLOAD_
+                                          # AUDIO_SOURCES, not through the
+                                          # group screen -- explicit
+                                          # clear so a STALE value from an
+                                          # earlier Music/Publications
+                                          # visit this session can't
+                                          # misroute B-back afterward.
+                    app._audio_pub_return_category = None
+                    app._current_audio_group_label = None  # v26.07.30.22:
+                                          # same reasoning as
+                                          # _pending_audio_group_source
+                                          # above -- Search Audio has no
+                                          # group, downloads go straight
+                                          # under .../<PLUGIN_NAME>/ with
+                                          # no Music/Publications level.
                     app._current_audio_source = None  # search results are
                                                         # never a music_category
                     app.dl_category = None
@@ -20225,6 +20491,14 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                                      SCREEN_DOWNLOAD_AUDIO_SOURCES,
                                      on_validate=_on_audio_search_validate,
                                      hint='e.g. "love", "faith", "psalm"')
+            elif source and source.get("subcategories"):
+                # v26.07.30.16: new -- "Music"/"Publications" both have
+                # this now (AUDIO_SOURCES didn't support subcategories
+                # at all before this session; mirrors the video "Series"
+                # handling below exactly).
+                app._pending_audio_group_source = source
+                app.audio_group_index = 0
+                app.screen = SCREEN_DOWNLOAD_AUDIO_GROUP
             elif source and source.get("books"):
                 app._pending_audio_source = source
                 app._current_audio_source = source  # Bible Reading Audio
@@ -20249,6 +20523,75 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
             app.download_quick_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
+        elif app.font_size_hotkey(btn):
+            pass
+
+    elif app.screen == SCREEN_DOWNLOAD_AUDIO_GROUP:
+        # v26.07.30.16: sub-picker for AUDIO_SOURCES entries marked
+        # "subcategories" ("Music"/"Publications") -- only reachable via
+        # one of those, so app._pending_audio_group_source is always set
+        # here. Mirrors SCREEN_DOWNLOAD_VIDEO_SERIES's handler closely,
+        # plus a NEW "pub_category" branch (video's Series entries never
+        # needed this -- it's specific to browsing STATIC_PUBLICATIONS
+        # for their audiobook versions).
+        source = app._pending_audio_group_source
+        subs = source.get("subcategories", []) if source else []
+        n = len(subs)
+        if btn == "UP": app.audio_group_index = (app.audio_group_index - 1) % n if n else 0
+        elif btn == "DOWN": app.audio_group_index = (app.audio_group_index + 1) % n if n else 0
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
+        elif btn == "A" and n:
+            sub = subs[app.audio_group_index]
+            # v26.07.30.22: every leaf reached from here belongs to
+            # THIS group ("Music" or "Publications") -- set once,
+            # applies to all three branches below (pub_category,
+            # books, direct loader). _category_dest_dir() uses this
+            # for the new nested folder structure.
+            app._current_audio_group_label = source["label"]
+            if sub.get("pub_category"):
+                # v26.07.30.16: "Books"/"Brochures and Booklets"/"Tracts"
+                # under Publications -- browse that category's real
+                # STATIC_PUBLICATIONS catalog (jw_fetch.list_items(),
+                # same data the EPUB Library uses) in audio-lookup mode.
+                app._pending_audio_source = sub  # so SCREEN_DOWNLOAD_
+                                                   # BROWSE's B-handler
+                                                   # knows to come back
+                                                   # here, same "was a
+                                                   # sub-picker opened
+                                                   # first" signal the
+                                                   # books/subcategory
+                                                   # branches already use
+                app._current_audio_source = None  # no single stable
+                                                     # folder name at
+                                                     # this level -- each
+                                                     # DOWNLOADED item
+                                                     # gets its own
+                                                     # title-named folder
+                                                     # once actually
+                                                     # selected, set at
+                                                     # that point instead
+                app.open_audio_pub_category(sub["pub_category"])
+            elif sub.get("issues"):
+                # v26.07.30.28: Watchtower Study/Meeting Workbook audio
+                # -- browse the full back-issue list instead of only
+                # ever fetching the current issue.
+                app._current_audio_source = sub
+                app.open_audio_issue_picker(sub)
+            elif sub.get("books"):
+                app._pending_audio_source = sub
+                app._current_audio_source = sub
+                app.audio_book_index = 0
+                app.screen = SCREEN_DOWNLOAD_AUDIO_BOOKS
+            else:
+                app._pending_audio_source = None
+                app._current_audio_source = sub
+                app.open_plugin_audio_list(sub["loader"], **sub.get("args", {}))
+        elif btn == "X":
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_AUDIO_GROUP
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
         elif app.font_size_hotkey(btn):
             pass
 
@@ -20258,22 +20601,76 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         # is always set here. Choosing a book adds its booknum to that
         # source's own args and calls its loader exactly like any other
         # audio source would.
+        #
+        # v26.07.30.16 BUG FIX: "Bible Reading Audio (NWT)" moved one
+        # level deeper this session (now under Publications, not a
+        # top-level AUDIO_SOURCES entry) -- B used to go straight to
+        # SCREEN_DOWNLOAD_AUDIO_SOURCES unconditionally, which would now
+        # skip past SCREEN_DOWNLOAD_AUDIO_GROUP entirely (wrong screen,
+        # and would strand app._pending_audio_group_source stale). Since
+        # NO top-level AUDIO_SOURCES entry has "books": True anymore --
+        # only nested ones do -- this screen is now ALWAYS reached via
+        # the group picker, so B always returns there.
         books = getattr(JW_PLUGIN, "BIBLE_BOOKS", [])
         n = len(books)
         if btn == "UP": app.audio_book_index = (app.audio_book_index - 1) % n if n else 0
         elif btn == "DOWN": app.audio_book_index = (app.audio_book_index + 1) % n if n else 0
-        elif btn == "B": app.screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_AUDIO_GROUP
         elif btn == "A" and n:
-            booknum, _name = books[app.audio_book_index]
+            booknum, name = books[app.audio_book_index]
             source = app._pending_audio_source
             if source:
                 args = dict(source.get("args", {}))
                 args["booknum"] = booknum
                 app.open_plugin_audio_list(source["loader"], **args)
+                # v26.07.30.24: set AFTER the call, not before -- open_
+                # plugin_audio_list() resets this to None by default
+                # (see its own docstring), same override pattern as
+                # _audio_pub_return_category. Gives this book its own
+                # subfolder -- see the __init__ comment on
+                # _current_audio_book_label for the filename-collision
+                # bug this fixes.
+                app._current_audio_book_label = name
         elif btn == "X":
             app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_AUDIO_BOOKS
             app.download_quick_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
+        elif app.font_size_hotkey(btn):
+            pass
+
+    elif app.screen == SCREEN_DOWNLOAD_AUDIO_ISSUES:
+        # v26.07.30.28: back-issue picker for AUDIO_SOURCES entries
+        # marked "issues": True (Watchtower Study/Meeting Workbook
+        # audio) -- only reachable via one of those, so app.
+        # _pending_audio_source is always set here. Mirrors
+        # SCREEN_DOWNLOAD_AUDIO_BOOKS closely; the list itself
+        # (app._dl_audio_issue_list) was already fetched async by
+        # open_audio_issue_picker() before this screen was shown, not
+        # a fixed constant like BIBLE_BOOKS.
+        issues = app._dl_audio_issue_list
+        n = len(issues)
+        if btn == "UP": app.audio_issue_index = (app.audio_issue_index - 1) % n if n else 0
+        elif btn == "DOWN": app.audio_issue_index = (app.audio_issue_index + 1) % n if n else 0
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_AUDIO_GROUP
+        elif btn == "A" and n:
+            issue, _label = issues[app.audio_issue_index]
+            source = app._pending_audio_source
+            if source:
+                args = dict(source.get("args", {}))
+                args["issue"] = issue
+                app.open_plugin_audio_list(source["loader"], **args)
+                # v26.07.30.28: set AFTER the call (same override
+                # pattern as the book/pub-category trackers) -- the
+                # issue is already known here (the user just picked
+                # it), no need to wait on the background thread the
+                # way the RSS-resolved "This Week" case originally did.
+                app._current_audio_issue_label = issue
+        elif btn == "X":
+            app.dl_quick_menu_return_screen = SCREEN_DOWNLOAD_AUDIO_ISSUES
+            app.download_quick_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_QUICK_MENU
+            app.refresh_status_indicators()
         elif app.font_size_hotkey(btn):
             pass
 
@@ -20367,17 +20764,52 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.dl_is_video = False
                 app.screen = (SCREEN_DOWNLOAD_VIDEO_SERIES if app._pending_video_source
                               else SCREEN_DOWNLOAD_VIDEO_SOURCES)
+            elif app.dl_audio_pub_mode:
+                # v26.07.30.16: browsing a Publications category
+                # (Books/Brochures/Tracts) for its audio versions --
+                # B goes back to the Publications/Music group picker.
+                app.dl_audio_pub_mode = False
+                app.screen = SCREEN_DOWNLOAD_AUDIO_GROUP
             elif app.dl_is_audio:
                 # v26.07.10.01: same idea as the video branch just above --
                 # B goes back to whichever audio picker screen got you
-                # here. If a Bible book was chosen first (books-type
-                # source), that's SCREEN_DOWNLOAD_AUDIO_BOOKS (so you can
-                # pick a different book without re-opening Audio from
-                # scratch); otherwise (e.g. Watchtower Study Audio, no
-                # book picker involved) it's SCREEN_DOWNLOAD_AUDIO_SOURCES.
+                # here.
+                #
+                # v26.07.30.16 BUG FIX: this used to only distinguish
+                # "Bible book chosen first" (-> SCREEN_DOWNLOAD_AUDIO_
+                # BOOKS) from everything else (-> SCREEN_DOWNLOAD_AUDIO_
+                # SOURCES unconditionally). Two problems once Music/
+                # Publications nesting landed this session: (1) EVERY
+                # audio source is now one level deeper, reached via
+                # SCREEN_DOWNLOAD_AUDIO_GROUP, not straight from
+                # SCREEN_DOWNLOAD_AUDIO_SOURCES -- the old unconditional
+                # target would skip past the group screen entirely,
+                # landing back at the very top for no reason; (2) a
+                # track list reached via Publications > Books/etc. needs
+                # to re-open THAT SAME publication list (open_audio_pub_
+                # category()), not just flip .screen -- the list itself
+                # was replaced by the track view, flipping .screen alone
+                # would show a stale/empty browse. _audio_pub_return_
+                # category (set only by that one path, None everywhere
+                # else) disambiguates all three cases correctly.
                 app.dl_is_audio = False
-                app.screen = (SCREEN_DOWNLOAD_AUDIO_BOOKS if app._pending_audio_source
-                              else SCREEN_DOWNLOAD_AUDIO_SOURCES)
+                if app._audio_pub_return_category:
+                    app.open_audio_pub_category(app._audio_pub_return_category)
+                elif app._pending_audio_source and app._pending_audio_source.get("issues"):
+                    # v26.07.30.28 BUG FIX (caught by testing the real
+                    # back-and-forth, not just the forward path): both
+                    # a "books" source and an "issues" source set
+                    # _pending_audio_source the same way -- checking
+                    # truthiness alone always routed to AUDIO_BOOKS,
+                    # even when the real origin was AUDIO_ISSUES.
+                    app.screen = SCREEN_DOWNLOAD_AUDIO_ISSUES
+                elif app._pending_audio_source:
+                    app.screen = SCREEN_DOWNLOAD_AUDIO_BOOKS
+                elif app._pending_audio_group_source:
+                    app.screen = SCREEN_DOWNLOAD_AUDIO_GROUP
+                else:
+                    # Search Audio results -- no group/source tracked.
+                    app.screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
             elif app.dl_category is not None:
                 # v26.07.09.14 BUG FIX (Kaleb's report): dl_category used
                 # to just persist here, unreset -- so a search started
@@ -20420,6 +20852,42 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # come before the generic "A" branch below, same reasoning
             # as the video branch.
             app.play_audio_item(app.dl_index)
+        elif btn == "A" and app.dl_audio_pub_mode and app.dl_items:
+            # v26.07.30.16: item here is a normal EPUB-shaped
+            # STATIC_PUBLICATIONS entry (from open_audio_pub_category()),
+            # not yet a resolved audio track -- selecting it fetches
+            # THIS title's real audio tracks via list_audio_items(),
+            # same generic mechanism every other AUDIO_SOURCES entry
+            # already uses, just with a live-derived pub/args instead of
+            # a hardcoded one.
+            item = app.dl_items[app.dl_index]
+            return_category = app.dl_category  # capture BEFORE
+                                                  # open_plugin_audio_list
+                                                  # clears dl_category
+            app._current_audio_source = {"label": item.get("title", item.get("_pub", "Audio"))}
+            app.open_plugin_audio_list("list_audio_items",
+                                        pub=item["_pub"], **(item.get("_extra") or {}))
+            app._audio_pub_return_category = return_category  # override
+                                                  # the method's own
+                                                  # default-None reset,
+                                                  # AFTER the call, so
+                                                  # B correctly re-opens
+                                                  # this same publication
+                                                  # list instead of going
+                                                  # to a generic screen
+            app._current_audio_pub_category_label = return_category  # v26.07.30.26:
+                                                  # same synchronous
+                                                  # override as the line
+                                                  # above (this is
+                                                  # already-known state,
+                                                  # not something the
+                                                  # background thread
+                                                  # needs to resolve) --
+                                                  # gives Books/
+                                                  # Brochures and
+                                                  # Booklets/Tracts its
+                                                  # own folder level
+                                                  # above the title.
         elif btn == "A" and app.dl_items:
             app.start_download(app.dl_index)
         elif btn == "SELECT" and (app.dl_is_video or app.dl_is_audio) and app.dl_items:
@@ -20468,6 +20936,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # See SCREEN_DOWNLOAD_BROWSE_MENU's own comment.
             app.download_browse_menu_index = 0
             app.screen = SCREEN_DOWNLOAD_BROWSE_MENU
+            app.refresh_status_indicators()
 
     elif app.screen == SCREEN_DOWNLOAD_BROWSE_MENU:
         items = _download_browse_menu_items(app)
@@ -20493,7 +20962,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # menu each time, same "stays open" pattern Filter: Cycle
             # already uses on SCREEN_LIBRARY_MENU.
             stays_open = choice in ("Font Size +", "Font Size -") or (
-                choice is not None and choice.startswith("Screen Scaling:"))
+                choice is not None and choice.startswith("Fill Screen:"))
             if choice is not None and not stays_open:
                 app.screen = SCREEN_DOWNLOAD_BROWSE
             if choice == "Stream":
@@ -20514,11 +20983,10 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
                 app.set_status(f"Font size: {pt}pt (smallest)" if app.fonts.size_index == before
                                 else f"Font size: {pt}pt")
-            elif choice is not None and choice.startswith("Screen Scaling:"):
+            elif choice is not None and choice.startswith("Fill Screen:"):
                 app.video_fill_screen = not app.video_fill_screen
                 save_settings({"video_fill_screen": app.video_fill_screen})
-                state = "Fill (stretch)" if app.video_fill_screen else "Fit (preserve aspect ratio)"
-                app.set_status(f"Video Scaling: {state}")
+                app.set_status(f"Fill Screen: {'On' if app.video_fill_screen else 'Off'}")
             elif choice == "Download All":
                 app.start_download_all()
             elif choice == "Play All":
@@ -20552,6 +21020,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 if clear_fn:
                     clear_fn()
                 flush_pin_finished_now()
+                flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                 app.refresh_library()
                 app.lib_index = 0
                 app.screen = SCREEN_LIBRARY
@@ -20595,11 +21064,16 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.dl_help_return_screen = app.dl_quick_menu_return_screen
                 app.dl_help_scroll = 0
                 app.screen = SCREEN_DOWNLOAD_HELP
+            elif choice == "A/V Controls Help":
+                app.av_help_return_screen = app.dl_quick_menu_return_screen
+                app.av_help_scroll = 0
+                app.screen = SCREEN_AV_HELP
             elif choice == "Library":
                 clear_fn = getattr(app.dl_plugin, "clear_search_token_cache", None)
                 if clear_fn:
                     clear_fn()
                 flush_pin_finished_now()
+                flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                 app.refresh_library()
                 app.lib_index = 0
                 app.screen = SCREEN_LIBRARY
@@ -20655,6 +21129,18 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.help_scroll += 10  # clamped for real inside draw_app_help()
         elif btn == "B":
             app.screen = app.help_return_screen
+
+    elif app.screen == SCREEN_AV_HELP:
+        if btn == "UP":
+            app.av_help_scroll = max(0, app.av_help_scroll - 1)
+        elif btn == "DOWN":
+            app.av_help_scroll += 1  # clamped for real inside draw_av_help()
+        elif btn == "L":
+            app.av_help_scroll = max(0, app.av_help_scroll - 10)
+        elif btn == "R":
+            app.av_help_scroll += 10  # clamped for real inside draw_av_help()
+        elif btn == "B":
+            app.screen = app.av_help_return_screen
 
     elif app.screen == SCREEN_TEXT_ENTRY:
         rows = TEXT_ENTRY_GRID
@@ -20776,6 +21262,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             if not app.go_back():
                 app.save_progress()
                 flush_pin_finished_now()  # v26.07.17.20: book-close checkpoint
+                flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                 app.screen = SCREEN_LIBRARY
         elif btn == "L":
             app.page_up(line_h, body_rows)
@@ -20892,6 +21379,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                                        # defensive reset as the Library
                                        # Menu's Themes... entry above
                 app.screen = SCREEN_THEME_MENU
+                app.refresh_status_indicators()
             elif choice == "Immersive Mode":
                 app.immersive_mode = not app.immersive_mode
                 save_settings({"immersive_mode": app.immersive_mode})
@@ -20904,6 +21392,19 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.scroll = min(app.scroll, app._max_scroll(_line_h, _body_rows))
                 # stays open, same as Theme +/- -- lets the label update
                 # in place without re-opening the menu
+            elif choice == "Fast Scroll":
+                # v26.07.27.08 (Feature #2, Kaleb's request: "Always on
+                # Fast Mode... default to always on when opening a book,
+                # but still let me turn it off"). Cycles the PERSISTENT
+                # starting default only -- open_book() reads this to
+                # decide what app.fast_scroll starts at for the next
+                # book opened; it does NOT touch the live fast_scroll
+                # state for the book currently open (Y still does that,
+                # same as always -- this setting is about what happens
+                # on the NEXT book open, not right now).
+                app.fast_scroll_default = "manual" if app.fast_scroll_default == "always_on" else "always_on"
+                save_settings({"fast_scroll_default": app.fast_scroll_default})
+                # stays open, same pattern as Immersive Mode/Sound Effects above
             elif choice == "Sound Effects":
                 app.sound_enabled = not app.sound_enabled
                 save_settings({"sound_enabled": app.sound_enabled})
@@ -20919,9 +21420,11 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 # already prevents selecting this while hidden.
                 app.video_settings_index = 0
                 app.screen = SCREEN_VIDEO_SETTINGS
+                app.refresh_status_indicators()
             elif choice == "Library":
                 app.save_progress()
                 flush_pin_finished_now()  # v26.07.17.20: book-close checkpoint
+                flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                 app.refresh_library()
                 app.lib_index = 0
                 app.screen = SCREEN_LIBRARY
@@ -20941,6 +21444,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 # of going through Library's B-to-quit path first.
                 app.save_progress()
                 flush_pin_finished_now()  # v26.07.17.20: book-close checkpoint
+                flush_recents_now()  # v26.07.27.31: same checkpoint as flush_pin_finished_now()
                 app.play_sound("error")  # v26.07.16.02: same exit cue
                                           # as Library's B-to-quit path
                 app.quit_requested = True
@@ -21057,6 +21561,53 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app._page_cache_key = None
             app._bookmark_delete_confirm_idx = None
             app.screen = SCREEN_READER
+
+    elif app.screen == SCREEN_RECENTLY_PLAYED:
+        # v26.07.27.31 (Kaleb's request): row 0 is the synthetic "Clear
+        # History" action (see draw_recently_played()'s own comment for
+        # why it's a row IN the list rather than a separate popup/menu
+        # entry -- Kaleb's exact phrasing was "a clear history function
+        # in the list"), real entries are recents[i-1] for row >= 1.
+        # Same two-press arm/confirm shape as Clear All Finished.
+        recents = load_recents()
+        n_rows = len(recents) + 1
+        if btn == "UP":
+            app.recents_index = (app.recents_index - 1) % n_rows if n_rows else 0
+            app._recents_clear_armed = False
+        elif btn == "DOWN":
+            app.recents_index = (app.recents_index + 1) % n_rows if n_rows else 0
+            app._recents_clear_armed = False
+        elif btn == "LEFT" and n_rows:
+            # v26.07.27.36 (Kaleb's request: "make it work like Library
+            # with the same button mapping controls" -- Library uses
+            # LEFT/RIGHT jump-10, clamped not wrapped, per its own
+            # v0.1.110 comment; matched exactly here rather than
+            # Bookmarks/Chapters' Y/L/R scheme, since Kaleb specifically
+            # named Library as the one to match).
+            app.recents_index = max(0, app.recents_index - 10)
+            app._recents_clear_armed = False
+        elif btn == "RIGHT" and n_rows:
+            app.recents_index = min(n_rows - 1, app.recents_index + 10)
+            app._recents_clear_armed = False
+        elif btn == "B":
+            if app._recents_clear_armed:
+                app._recents_clear_armed = False  # cancel pending clear first
+            else:
+                app.screen = app._recents_return_screen
+        elif btn == "A":
+            if app.recents_index == 0:
+                if not recents:
+                    pass  # nothing to clear -- no-op, same spirit as
+                          # Clear All Finished's own empty-set no-op
+                elif app._recents_clear_armed:
+                    app.clear_recents()
+                    app._recents_clear_armed = False
+                else:
+                    app._recents_clear_armed = True
+            else:
+                app._recents_clear_armed = False
+                entry = recents[app.recents_index - 1]
+                app.play_recent(entry)
 
     elif app.screen == SCREEN_STORAGE:
         n = len(STORAGE_ACTIONS)

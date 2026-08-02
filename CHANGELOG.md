@@ -1,37 +1,38 @@
-# Changelog
+## 🚀 Release Highlights (v26.07.29.13 – v26.07.30.31)
 
-Documentation and repo-metadata changes are logged here. Application
-version history (main.py, YY.MM.DD.XX scheme) lives in main.py's own
-AI notes/changelog block, not here.
+### 📁 File & Folder Management
 
-## v26.07.18.12 — 2026-07-18
+* **Passive Folder Migration:** Replaced the manual migration tool. The app now passively detects and safely migrates legacy flat audio/video folders to structured locations during download checks without re-fetching content.
+* **Plugin Directory Isolation:** Audio and Video downloads are now nested under dynamic plugin wrappers (`ROMS/Music/<PLUGIN_NAME>/...` and `ROMS/movies/<PLUGIN_NAME>/...`) to keep media separated from other apps.
+* **Collision-Proof Subfolding:**
+* Added per-item subfolders so identical chapter filenames no longer overwrite each other.
+* **Periodicals & Publications:** Added per-issue subfolders (e.g., `.../202610/`) and category subfolders (`.../Publications/Books/<Title>/`).
 
-**Note on versioning:** this release switches PicoReader's public GitHub
-release tags from the earlier `0.1.x` scheme to the same `YY.MM.DD.XX`
-date-based scheme already used internally in `main.py`'s own changelog.
-Going forward, release tags will always match the app version they were
-built from — no separate release-numbering track. This release corresponds
-to app build `v26.07.18.11`; the `.12` release tag marks the packaging/
-documentation commit on top of that build.
 
-### Fixed
-- `LICENSE.md` trimmed to pure, unmodified MIT license text. It previously
-  included extra paragraphs (scope note + font license pointer) that kept
-  GitHub's license detector from auto-recognizing it as MIT.
-- `FONT_LICENSE.txt` now carries the scope clarification that used to sit
-  in `LICENSE.md` (which source files MIT covers vs. the separately
-  licensed bundled fonts), plus a corrected claim — it now says "license
-  summary" instead of falsely claiming to contain the full legal text, and
-  links to the canonical Bitstream Vera license for that.
 
-### Added
-- `README.md` Screenshots section, with real captures (not mockups) of the
-  Library and Reader screens, plus a five-theme gallery (Default, Dim Warm,
-  Deep Amber, Red Shift, Adventure). Captured by running the actual
-  `main.py` render pipeline headlessly (SDL2 dummy driver, real bundled
-  font, real `apply_theme()`/`draw_library()`/`draw_reader()` calls) against
-  a real public-domain library (Project Gutenberg's top-10-yesterday list
-  plus Sherlock Holmes) rather than hand-drawn placeholders.
-- `screenshots/` folder: `library.png`, `reader.png`,
-  `theme_default.png`, `theme_dim_warm.png`, `theme_deep_amber.png`,
+---
+
+### 🎧 Audio System Overhaul
+
+* **Music vs. Publications Restructuring:** Audio navigation is now cleanly split into **Music** and **Publications** groups at the top level.
+* **Full Audio Backlog Browsing:** Added full back-issue browsing for primary periodical and workbook audio (matching historical depth back to 2016).
+* **Audio Availability Filtering:** Added persistent caching for MP3 availability checks—publications lacking audio are cleanly filtered out without repeating live network queries.
+* **Article Series Audio Support:** Added support for audio-enabled article series, including legacy archives, life stories, additional topics, and docid-range probing for specific study series.
+
+---
+
+### 📚 Catalog & Content Expansion
+
+* **Search Discovery Caching:** Items discovered via live search or manual code entries are now permanently cached and seamlessly merged into normal category browsing.
+* **New EPUB Catalog Additions:** Live-verified and added two new publications to the main catalog.
+* **Multi-Year Gap Backfill:** Updated periodical issue generators to automatically scan and backfill multi-year gaps if maintenance was missed across multiple calendar years.
+
+---
+
+### ⚡ Navigation, UI & Async Fixes
+
+* **Quick Menu Overlay Fix:** Fixed a freeze where opening the Quick Menu (X) while loading audio issues broke the loader permanently.
+* **Race Condition Guards:** Updated async completion guards to check exact source identity rather than just screen state, preventing stale background requests from clobbering newly selected views.
+* **B-Button Routing Fixes:** Corrected back-button navigation hierarchy across multi-level audio pickers, content lists, and publication categories.
+* **Metadata Extraction:** Integrated `epub_engine` to parse downloaded EPUB metadata on the fly, auto-populating missing cover themes into issue lists.
   `theme_red_shift.png`, `theme_adventure.png`.

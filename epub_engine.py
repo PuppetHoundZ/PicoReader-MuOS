@@ -18,6 +18,11 @@ Current version: v26.07.19.01 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Non-obvious behavior is explained via inline
 "# vYY.MM.DD.XX" comments above the relevant code, same convention as
 main.py -- see that file's own AI NOTES header for the full policy.
+
+See main.py's own "CROSS-FILE ARCHITECTURE MAP" for how this file fits
+into the whole project -- short version: this is the only file that
+parses EPUB structure itself; main.py treats it as a black box that
+turns a .epub file into navigable content.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import bisect
 import os
 import json
 import re
+import html
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -109,6 +115,337 @@ class TocEntry:
     href: str
     level: int
     children: list = field(default_factory=list)
+
+
+# v26.08.05.01 (Kaleb's request: "listen to this book" audio-EPUB
+# linking, built to be reusable by any plugin, not just jw_fetch --
+# see main.py's AI NOTES for the fuller design writeup). Deliberately
+# a plain module-level function, not a plugin-specific one -- it takes
+# and returns generic (title, href-ish) shapes, no jw_fetch/gutenberg_
+# fetch coupling, so it can genuinely be reused for a future LibriVox
+# chapter-correlation feature without duplicating this logic.
+#
+# Live-confirmed (real downloaded EPUBs, real GETPUBMEDIALINKS audio
+# listings) across three different JW.org publication shapes --
+# Watchtower Study (7 articles/7 tracks), Meeting Workbook (9 weeks/9
+# tracks), and a Books-category title (6 lessons/6 tracks): the real
+# article TOC titles and the real audio track titles are NEVER byte-
+# identical (audio adds "(December 7-13)" date suffixes, the EPUB has
+# zero-width spaces mid-title, curly vs straight quotes) -- so this
+# matches by POSITION after stripping known boilerplate, not by text.
+# Each publication's front/back-matter boilerplate count differs (2
+# front/1 back for periodicals, 2 front/2 back for the Books title
+# tested), so boilerplate is identified by LABEL, not a fixed offset.
+NON_CONTENT_TOC_LABELS = {
+    "table of contents", "contents", "title page", "title page/publishers\u2019 page",
+    "title page/publishers' page", "media", "page navigation",
+    "bible navigation", "cover", "inside cover", "back cover", "copyright page",
+    "track your bible reading", "maps", "image index", "scripture index",
+    "index of illustrations (parables)", "the areas where jesus lived and taught",
+    "featured content in jw library and on jw.org",
+}
+
+# v26.08.05.04 BUG FIX (found by Kaleb explicitly asking to test more
+# titles -- Walk Courageously With God and the full Enjoy Life Forever
+# course both silently landed on the WRONG track before this fix, not
+# an error, which is worse: "Walk Courageously With God" has an
+# "Inside Cover" TOC entry (added to NON_CONTENT_TOC_LABELS above,
+# confirmed live: 68 TOC entries - 5 boilerplate = 63, matching 63
+# real audio tracks exactly). "Enjoy Life Forever -- An Interactive
+# Bible Course" additionally has "Media for Section 1" through "Media
+# for Section 4" -- a PER-BOOK, NUMBERED label (not a fixed string, so
+# it can't live in the plain set above) -- confirmed live these have
+# no matching audio track (72 real audio tracks; "Am I Ready?" and
+# "Endnotes" DO have real tracks and must NOT be stripped, only the
+# numbered "Media for Section N" pages don't). Matched via regex
+# rather than guessing a fixed count of sections, since a future book
+# could have any number of them.
+NON_CONTENT_TOC_PATTERNS = [
+    re.compile(r"^media for section \d+$", re.IGNORECASE),
+]
+
+
+# v26.08.05.06 (Kaleb's idea: "is it possible to get information on
+# the chapter title or number to match the track too" -- from within
+# the actual page content, not just the TOC label). This is a genuine
+# upgrade over correlate_toc_to_audio() above, not a replacement: JW.org
+# publications embed a small, structured label on each content page --
+# a <p class="contextTtl"> paragraph (numbers for books: "26 NATHAN",
+# "SECTION 1", "LESSON 38"; date ranges for Watchtower: "DECEMBER
+# 21-27, 2026"), a <p class="featureTtl"> for Awake! articles (the
+# shared series theme, e.g. "COPING WITH RISING PRICES"), or for
+# Meeting Workbook, the date lives directly in <h1> with no wrapper at
+# all -- confirmed live by reading the raw HTML of six real downloaded
+# EPUBs (Walk Courageously With God, Draw Close to Jehovah, a
+# Watchtower issue, a Meeting Workbook issue, an Awake! issue, and the
+# full Enjoy Life Forever course), plus the "Sing Out Joyfully" to
+# Jehovah songbook ("SONG N").
+#
+# Why this matters: correlate_toc_to_audio() only works if the TOC
+# label and the audio title agree closely enough in STRUCTURE (same
+# count after stripping boilerplate) -- it can't help when a single
+# entry's descriptive wording genuinely differs between the print and
+# audio editions, which does happen (confirmed live: Draw Close to
+# Jehovah's "Section 1" is titled "Awe-Inspiring Power" in the EPUB
+# but "Vigorous in Power" in the audio -- a real rename, not a
+# formatting difference). A number or date pulled from the page itself
+# sidesteps that entirely: "SECTION 1" is "SECTION 1" regardless of
+# what the surrounding descriptive title says.
+#
+# Only ever returns a match when it's UNIQUE (exactly one audio item
+# shares the same extracted signal) -- ambiguous or absent signals
+# return None so the caller falls back to correlate_toc_to_audio(),
+# same never-guess principle as everywhere else in this file.
+
+_CONTEXT_TTL_RE = re.compile(r'<p[^>]*class="[^"]*contextTtl[^"]*"[^>]*>(.*?)</p>',
+                              re.IGNORECASE | re.DOTALL)
+_FEATURE_TTL_RE = re.compile(r'<p[^>]*class="[^"]*featureTtl[^"]*"[^>]*>(.*?)</p>',
+                              re.IGNORECASE | re.DOTALL)
+_H1_RE = re.compile(r'<h1[^>]*>(.*?)</h1>', re.IGNORECASE | re.DOTALL)
+# v26.08.05.08 (Kaleb's request: test back to 2011). The 2011-2015 era
+# EPUBs use a completely different, older markup generation -- no
+# <h1> tag at all, no contextTtl/featureTtl classes, confirmed on real
+# downloaded issues of both "w" and "g" back to September 2011 (the
+# earliest era that exists at all -- see WATCHTOWER_MONTHLY_START/
+# AWAKE_MONTHLY_START in jw_fetch.py). The article title instead lives
+# in a plain <p class="st"><b>Title</b></p> -- "st" confirmed stable
+# across multiple real files from both publications, not a one-off.
+_OLD_ERA_TITLE_RE = re.compile(r'<p[^>]*class="st"[^>]*>(.*?)</p>',
+                                re.IGNORECASE | re.DOTALL)
+# v26.08.05.08 follow-up: "st" alone isn't universal either -- confirmed
+# a THIRD old-era variant on feature/travel articles, which split the
+# title across TWO separately-classed paragraphs ("s8" then "s9", e.g.
+# "Murchison Falls" / "Uganda's Unique Piece of the Nile") instead of
+# using "st" at all. Rather than keep chasing one class name at a time,
+# this uses a universal fallback instead: the page's own <title> tag
+# in <head>, confirmed present with the FULL real article title on
+# every era/markup variant tested (current, "st"-era, and the split-
+# title "s8"/"s9" era alike) -- because it's part of the EPUB/XHTML
+# spec itself, not a styling class that changed between templates.
+# Always carries an old-era "D/D " day-prefix (e.g. "9/11 Murchison
+# Falls...") the newer eras don't have and the AUDIO title never has
+# either -- stripped before use so it doesn't break substring matching.
+_HEAD_TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+_DAY_PREFIX_RE = re.compile(r'^\d{1,2}/\d{1,2}\s+')
+_TAG_RE = re.compile(r'<[^>]+>')
+_WS_RE = re.compile(r'\s+')
+
+# v26.08.05.06: "SONG" added alongside CHAPTER/SECTION/LESSON after
+# confirming the songbook's own contextTtl reads "SONG N" -- same
+# family, same mechanism, no separate code path needed for the label
+# side. _SONG_LIST_NUMBER_RE is separate: the songbook's AUDIO titles
+# (from the mediator-category loader, a different lookup than every
+# other pub's plain GETPUBMEDIALINKS track list -- see jw_fetch.
+# find_audio_for_epub()) come back as "1. Jehovah's Attributes", a
+# leading-number-plus-period list style with no "SONG" keyword at all,
+# so it needs its own pattern, checked BEFORE the bare-number fallback
+# (which would otherwise misread it as an unlabeled chapter number).
+_LABELED_NUMBER_RE = re.compile(r'(CHAPTER|SECTION|LESSON|SONG)\s*\u00a0?\.?\s*(\d+)',
+                                 re.IGNORECASE)
+_SONG_LIST_NUMBER_RE = re.compile(r'^(\d+)\.\s')
+_BARE_NUMBER_RE = re.compile(r'^(\d+)\b')
+_MONTH_DAY_RE = re.compile(
+    r'(january|february|march|april|may|june|july|august|september|'
+    r'october|november|december)\s+(\d{1,2})', re.IGNORECASE)
+
+
+def _clean_html_fragment(fragment):
+    """Strip tags, unescape entities, drop zero-width spaces (already
+    confirmed to appear mid-title in real JW.org markup -- see the
+    correlate_toc_to_audio() docstring above), collapse whitespace."""
+    text = _TAG_RE.sub(" ", fragment)
+    text = html.unescape(text)
+    text = text.replace("\u200b", "")
+    return _WS_RE.sub(" ", text).strip()
+
+
+def _extract_labeled_number(text):
+    """Returns (LABEL, number) e.g. ("SECTION", 1), or None. Checked in
+    order: an explicit keyword (CHAPTER/SECTION/LESSON/SONG) is the
+    most reliable signal; a leading "N. " list style is the songbook
+    audio-title convention specifically; a bare leading number with no
+    keyword (e.g. a book's own contextTtl reading just "26 NATHAN")
+    defaults to CHAPTER, which held true on every real book tested --
+    JW.org books that use unlabeled numbering are numbering chapters,
+    never sections (sections always carry the explicit word)."""
+    if not text:
+        return None
+    m = _LABELED_NUMBER_RE.search(text)
+    if m:
+        return (m.group(1).upper(), int(m.group(2)))
+    m = _SONG_LIST_NUMBER_RE.match(text)
+    if m:
+        return ("SONG", int(m.group(1)))
+    m = _BARE_NUMBER_RE.match(text)
+    if m:
+        return ("CHAPTER", int(m.group(1)))
+    return None
+
+
+def extract_labeled_number(text):
+    """Public alias for _extract_labeled_number() -- exposed so callers
+    outside this module (e.g. main.py's audio-list sorting for the
+    songbook, whose track field isn't numeric) can reuse the same
+    number extraction without reaching into a private name."""
+    return _extract_labeled_number(text)
+
+
+def _extract_date_anchor(text):
+    """Returns a normalized "month day" string (e.g. "december 21")
+    from the FIRST month+day found, or None. Deliberately just the
+    start day, not the full range -- enough to uniquely identify one
+    week/issue among a periodical's handful of others without needing
+    to also parse cross-month end dates like "November 30-December
+    6" or "December 28-January 3"."""
+    if not text:
+        return None
+    m = _MONTH_DAY_RE.search(text)
+    return f"{m.group(1).lower()} {int(m.group(2))}" if m else None
+
+
+def identify_page_content(raw_html):
+    """Extracts whatever structured signal is present on one content
+    page: contextTtl/featureTtl/h1 text, plus a derived labeled_number
+    and/or date_anchor from whichever of those actually contains one.
+    Pure text processing, no I/O -- callers read the raw page HTML
+    themselves (EpubDocument.identify_current_page() below is the
+    normal entry point, which handles that read)."""
+    ctx_m = _CONTEXT_TTL_RE.search(raw_html)
+    feat_m = _FEATURE_TTL_RE.search(raw_html)
+    h1_m = _H1_RE.search(raw_html)
+    ctx_t = _clean_html_fragment(ctx_m.group(1)) if ctx_m else None
+    feat_t = _clean_html_fragment(feat_m.group(1)) if feat_m else None
+    h1_t = _clean_html_fragment(h1_m.group(1)) if h1_m else None
+    if not h1_t:
+        # v26.08.05.08: 2011-2015 era pages have no <h1> at all -- see
+        # _OLD_ERA_TITLE_RE's comment above. Only used when a real <h1>
+        # wasn't found, so this never overrides the newer markup.
+        old_m = _OLD_ERA_TITLE_RE.search(raw_html)
+        if old_m:
+            h1_t = _clean_html_fragment(old_m.group(1))
+    if not h1_t:
+        # v26.08.05.08 follow-up: neither <h1> nor class="st" found --
+        # last resort, the universal <title> tag (see _HEAD_TITLE_RE's
+        # comment above for why this catches variants the two more
+        # specific patterns above don't).
+        head_m = _HEAD_TITLE_RE.search(raw_html)
+        if head_m:
+            h1_t = _DAY_PREFIX_RE.sub("", _clean_html_fragment(head_m.group(1)))
+    labeled_number = _extract_labeled_number(ctx_t) or _extract_labeled_number(h1_t)
+    date_anchor = _extract_date_anchor(ctx_t) or _extract_date_anchor(h1_t)
+    return {"context": ctx_t, "feature": feat_t, "h1": h1_t,
+            "labeled_number": labeled_number, "date_anchor": date_anchor}
+
+
+def match_page_to_audio(identity, audio_items):
+    """Given identify_page_content()'s output and a list of audio items
+    (each with a "title" key), returns the matching index into
+    audio_items, or None if no signal produced a UNIQUE match. Tries,
+    in order of confidence: (1) labeled number -- exact, sidesteps any
+    descriptive-title rename entirely; (2) date anchor -- exact, for
+    periodicals; (3) h1 EXACT title equality, case-insensitive -- the
+    strongest text-based signal, checked before substring containment
+    so a real exact match always wins even if some OTHER track's title
+    happens to also contain the same words (see the v26.08.05.19 fix
+    below); (4) h1 substring containment, normalized -- handles Awake!
+    and anything else with no structured wrapper at all, but only
+    trusted when it's unambiguous (matches exactly one track)."""
+    if not identity or not audio_items:
+        return None
+    if identity.get("labeled_number") is not None:
+        cands = [i for i, a in enumerate(audio_items)
+                  if _extract_labeled_number(a.get("title", "")) == identity["labeled_number"]]
+        if len(cands) == 1:
+            return cands[0]
+    if identity.get("date_anchor"):
+        cands = [i for i, a in enumerate(audio_items)
+                  if _extract_date_anchor(a.get("title", "")) == identity["date_anchor"]]
+        if len(cands) == 1:
+            return cands[0]
+    if identity.get("h1"):
+        h1n = identity["h1"].strip().lower()
+        if h1n:
+            # v26.08.05.19 BUG FIX (found testing "Imitate Their Faith":
+            # its real "Conclusion" chapter's h1 is literally "Conclusion",
+            # and audio track 26 is titled exactly "Conclusion" too -- a
+            # clean, unambiguous exact match -- but track 20's title,
+            # "She Drew 'Conclusions in Her Heart'", also happens to
+            # CONTAIN "conclusion" as a substring ("Conclusions"), so the
+            # substring-containment tier below saw TWO candidates and
+            # correctly refused to guess between them, even though one
+            # was an exact match and the other only an incidental plural
+            # substring collision. Exact equality is strictly stronger
+            # evidence than mere containment, so it's now checked FIRST,
+            # completely independent of whatever else in the list might
+            # coincidentally contain the same words.
+            exact_cands = [i for i, a in enumerate(audio_items)
+                            if (a.get("title", "") or "").strip().lower() == h1n]
+            if len(exact_cands) == 1:
+                return exact_cands[0]
+            cands = [i for i, a in enumerate(audio_items)
+                      if h1n in (a.get("title", "") or "").lower()]
+            if len(cands) == 1:
+                return cands[0]
+    return None
+
+
+def correlate_toc_to_audio(toc_entries, audio_items, doc_title=None):
+    """Positionally correlate a FLAT list of TocEntry objects (caller
+    flattens first -- main.py already has flatten_toc() for this, kept
+    out of this function so it stays a pure, dependency-free helper)
+    against a list of audio items shaped like jw_fetch's (each a dict
+    with "title" and "track" keys).
+
+    Strips entries whose title is a known boilerplate label (see
+    NON_CONTENT_TOC_LABELS/NON_CONTENT_TOC_PATTERNS above) or exactly
+    matches doc_title (JW.org publications repeat their own title as
+    the first TOC entry -- confirmed on every publication type
+    tested). Whatever remains is assumed to be real chapter/article
+    content, in document order.
+
+    Returns a list of (toc_entry, audio_item) tuples, one per real
+    article, in track order -- or None if the counts don't match after
+    stripping. Never guesses a partial or misaligned mapping: a count
+    mismatch means either an unexpected TOC shape (a boilerplate label
+    this function doesn't know about yet -- see the v26.08.05.04 fix
+    above for how two real ones were found and fixed) or an audio
+    listing that doesn't actually correspond to this EPUB, and
+    returning None lets the caller fall back to a plain "browse all
+    audio" list instead of confidently pointing someone at the wrong
+    track, which is worse than no match at all."""
+    if not toc_entries or not audio_items:
+        return None
+    normalized_title = (doc_title or "").strip()
+    doc_title_stripped = False  # v26.08.05.07 BUG FIX (found testing a
+                                 # real 2016 Awake! issue): this used to
+                                 # strip EVERY entry matching doc_title,
+                                 # not just the front-matter cover entry
+                                 # it's meant for. Confirmed live: that
+                                 # issue's first REAL article happens to
+                                 # share its exact title with the book's
+                                 # own cover ("Attitude Makes a
+                                 # Difference!" appears both as the
+                                 # cover AND as article 1) -- stripping
+                                 # both dropped a real article, throwing
+                                 # off the count and failing correlation
+                                 # entirely. Now only the FIRST match is
+                                 # treated as the cover; any later entry
+                                 # with the same text is real content.
+    filtered = []
+    for entry in toc_entries:
+        title = (entry.title or "").strip()
+        if title.lower() in NON_CONTENT_TOC_LABELS:
+            continue
+        if any(p.match(title) for p in NON_CONTENT_TOC_PATTERNS):
+            continue
+        if normalized_title and not doc_title_stripped and title == normalized_title:
+            doc_title_stripped = True
+            continue
+        filtered.append(entry)
+    if len(filtered) != len(audio_items):
+        return None
+    audio_sorted = sorted(audio_items, key=lambda a: a.get("track") or 0)
+    return list(zip(filtered, audio_sorted))
 
 
 @dataclass
@@ -680,6 +1017,114 @@ class EpubDocument:
         base_dir = posixpath.dirname(current_file)
         target = posixpath.normpath(posixpath.join(base_dir, file_part))
         return target, anchor
+
+    def identify_current_page(self, file_path: str) -> dict | None:
+        """v26.08.05.06: reads file_path's raw HTML and returns identify_
+        page_content()'s structured signal for it -- see that function's
+        docstring for what it extracts and why. Returns None (not an
+        empty dict) if the page can't be read at all, so callers can
+        tell "genuinely no signal" apart from "file error" the same way
+        every other read-based method in this file does."""
+        try:
+            raw = self._read(file_path)
+        except (KeyError, ValueError):
+            return None
+        return identify_page_content(raw)
+
+    def get_bible_chapter_files(self, book_entry: "TocEntry") -> list[str] | None:
+        """v26.08.05.01: for a Bible book's TOC entry (e.g. "Genesis"),
+        returns the ordered list of content-file paths for each chapter,
+        chapter 1 first.
+
+        Genesis (and every NWT book, confirmed on the one live-tested)
+        is a single FLAT TocEntry, not 50 nested chapter entries -- the
+        real per-chapter split lives one level deeper, in a small JW.org-
+        generated chapter-picker page. The useful discovery: book_entry.
+        href ALREADY IS that page for JW.org's NWT EPUBs (Genesis's TOC
+        entry href resolved to "biblechapternav1.xhtml" on a real
+        downloaded nwt_E.epub) -- this isn't a separate lookup, it's the
+        exact same href normal TOC navigation already uses.
+
+        Parses that page's own `<a href="...">N</a>` chapter links (a
+        small, well-understood JW-generated table, not general HTML --
+        regex is safe here for the same reason it's already used
+        elsewhere in this file for narrow known page shapes) and sorts
+        by the chapter NUMBER text rather than trusting document order,
+        as a safety net against a future template change (today's real
+        template is already in order -- confirmed on Genesis's full 50-
+        chapter table -- this just makes that an explicit guarantee
+        instead of an assumption).
+
+        Returns None if the target file doesn't parse as a chapter-nav
+        page (no numbered links found) -- callers should treat that as
+        "this TOC entry isn't a Bible book with the expected structure"
+        and fall back to normal single-entry navigation rather than
+        guessing at a chapter number."""
+        # v26.08.05.01 BUG FIX (caught immediately by this function's
+        # own live test): book_entry.href is ALREADY an absolute, zip-
+        # root-relative path (TocEntry hrefs are pre-joined with the
+        # NCX's own directory in _parse_ncx()) -- calling resolve_href()
+        # on it a second time here double-joined the directory
+        # ("OEBPS/OEBPS/biblechapternav1.xhtml") and 404'd on every real
+        # book. Use it directly; resolve_href() is still the right tool
+        # below for the chapter links found INSIDE that page, since
+        # those really are relative to it.
+        target = book_entry.href
+        if not target:
+            return None
+        try:
+            html = self._read(target)
+        except (KeyError, ValueError):
+            return None
+        links = re.findall(r'<a\s+href="([^"]+)">\s*(\d+)\s*</a>', html)
+        if links:
+            links.sort(key=lambda pair: int(pair[1]))
+            chapter_files = []
+            for href, _num in links:
+                tgt, _anch = self.resolve_href(href, target)
+                if tgt:
+                    chapter_files.append(tgt)
+            return chapter_files or None
+
+        # v26.08.05.17 FALLBACK (built after confirming live: the 1984
+        # Edition Bible has NO chapter-nav page at all -- book_entry.href
+        # points straight at chapter 1's own content file). Original
+        # assumption going in ("whole book packed into one file with
+        # in-page chapter anchors") was WRONG -- checked the raw spine
+        # directly instead of guessing further: it's actually near-
+        # identical to the 2013 Revision's structure, just not exposed
+        # via a picker page. Each chapter is genuinely its own spine
+        # file (e.g. "05_BI12_.GE.xhtml", "05_BI12_.GE-split2.xhtml",
+        # "05_BI12_.GE-split3.xhtml", ...), each containing EXACTLY ONE
+        # "chapterN" anchor -- confirmed against the real EPUB, all 50
+        # Genesis files in sequence, N incrementing by exactly 1 every
+        # file, correctly stopping at Exodus's own chapter1 (which
+        # breaks the +1 sequence, not just the anchor count). Walk
+        # forward from book_entry's own spine position collecting that
+        # exact pattern; stop the moment a spine file doesn't match
+        # (wrong anchor count, or N breaks sequence) -- same "stop
+        # rather than guess" contract as every other structural
+        # detection in this file.
+        start_idx = self.spine_index(target)
+        if start_idx == -1:
+            return None
+        single_chapter_re = re.compile(r'id="chapter(\d+)"')
+        chapter_files = []
+        expected = 1
+        i = start_idx
+        while i < len(self.spine):
+            fname = self.spine[i]
+            try:
+                fhtml = self._read(fname)
+            except (KeyError, ValueError):
+                break
+            matches = single_chapter_re.findall(fhtml)
+            if len(matches) != 1 or int(matches[0]) != expected:
+                break
+            chapter_files.append(fname)
+            expected += 1
+            i += 1
+        return chapter_files or None
 
     def peek_raw_size(self, file_path: str) -> int:
         """v26.07.11.06: near-instant size estimate for file_path via the

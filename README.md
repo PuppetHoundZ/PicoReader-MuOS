@@ -5,12 +5,6 @@ PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H** running
 dependencies — no PIL/Pillow, no pip installs, nothing to set up. Just
 copy it on and start reading.
 
-Image decoding uses the device's own native `libSDL2_image`/`libjpeg`
-libraries for speed, but that's never a hard requirement — a complete,
-pure-Python JPEG decoder is built in as an automatic fallback. If a
-future muOS update ever changes or removes those native libraries,
-PicoReader keeps working on its own rather than breaking.
-
 It's a companion app to
 [Pico8FavsSorter](https://github.com/PuppetHoundZ/MuOS-Pico8-Favs-Sorter),
 another muOS app for the same device.

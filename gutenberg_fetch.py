@@ -1,7 +1,7 @@
 """
 gutenberg_fetch.py
 
-Current version: v26.07.20.03 (matches main.py's date-based scheme,
+Current version: v26.08.07.23 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
 behavior near the relevant code, same convention as main.py.
 
@@ -44,8 +44,8 @@ WHY OPDS INSTEAD OF GUTENDEX:
   "subsection" link to that book's own .opds detail page, which DOES have
   the real acquisition links. So download() does one extra request (fetch
   the book's own .opds page, then download the EPUB) -- same two-step
-  shape as jw_fetch.py's resolve-then-download pattern elsewhere in this
-  project.
+  resolve-then-download shape used elsewhere in this project for other
+  sources with similar URL-resolution needs.
 
 THIRD-PARTY API -- NOT OUR CODE, but now the OFFICIAL one:
   This calls Project Gutenberg's own public OPDS feed directly. No
@@ -66,6 +66,16 @@ HOW PLUGIN LOADING WORKS (so you understand the bigger picture):
   If the file is missing or crashes on import, the app silently skips it
   -- no crash, no broken menu. Drop the file back in and restart to
   restore it. No other files need to be changed.
+
+ARCHITECTURE -- see main.py's own "CROSS-FILE ARCHITECTURE MAP" (near
+the top of that file) for the full picture of what belongs in which
+file across the whole project. Short version for this file: it owns
+Gutenberg's real data (categories, the OPDS fetch functions, folder
+identity) and the shared plugin functions every source implements the
+same way. It does NOT own screens, button handling, or how results get
+drawn -- that's all main.py's generic layer, shared with every other
+plugin. If you're about to add UI/navigation code here, it almost
+certainly belongs in main.py instead.
 
 PLUGIN CONTRACT (see main.py's plugin-loading code for how this is used):
   Every downloader plugin must implement:
@@ -175,8 +185,8 @@ CATEGORIES = [
 ]
 
 # v26.07.23.06 (Kaleb's request: per-category download subfolders for
-# EPUBs, same idea as jw_fetch.py's CATEGORIES_NO_FOLDER -- see that
-# one's docstring for the full reasoning). Popular/Latest/Random are
+# EPUBs, same idea used elsewhere in this project for view-style
+# categories that aren't real genres). Popular/Latest/Random are
 # browse VIEWS across every genre at once, not a genre themselves -- a
 # random adventure novel landing in a folder literally named "Random"
 # would be a meaningless category to browse later. Every real genre
@@ -346,7 +356,32 @@ def _safe_filename(title, book_id):
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         cleaned = f"gutenberg-{book_id}"
-    return f"{cleaned[:80]}.epub"
+    # v26.08.06.07 (Kaleb's request: wire find_by_gutenberg_id() into
+    # the reader screen, Phase 2 of the LibriVox correlation feature).
+    # The real Gutenberg book ID is now embedded in the saved filename
+    # itself -- same reasoning applied elsewhere in this project for
+    # other sources: a downloaded EPUB has to be able to answer "where
+    # did you come from, and what's your real catalog ID" on its own,
+    # later, with no network call and no separate sidecar file to keep
+    # in sync. See parse_epub_filename() below for the read-back half
+    # of this contract. NOTE: this only helps books downloaded AFTER
+    # this change -- an EPUB already in someone's Library from before
+    # won't have the tag and Find Audiobook will report it as
+    # unavailable for that title, same as any other "wasn't downloaded
+    # from a source that tags itself" case.
+    return f"{cleaned[:80]} [gutenberg-{book_id}].epub"
+
+
+def parse_epub_filename(filename):
+    """v26.08.06.07: read-back half of _safe_filename()'s embedded-ID
+    contract -- same function name and same "local-only, no network
+    call" contract used elsewhere in this project for other sources,
+    so main.py's reader-menu visibility check can treat both plugins
+    the same way. Returns the integer Gutenberg book ID, or None if
+    this filename doesn't carry one (not a Gutenberg download, or one
+    made before this tagging existed)."""
+    m = re.search(r"\[gutenberg-(\d+)\]\.epub$", filename or "")
+    return int(m.group(1)) if m else None
 
 
 def _entry_to_item(entry):

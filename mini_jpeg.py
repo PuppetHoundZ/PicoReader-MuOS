@@ -54,6 +54,11 @@ test image: 5.702s -> 2.913s, roughly 2x faster. A real baseline bug
 found and fixed during the progressive work -- see reset_byte_align()'s
 own inline comment for the exact mechanism if debugging DRI-related
 corruption.
+
+See main.py's own "CROSS-FILE ARCHITECTURE MAP" for how this file
+fits into the whole project -- short version: this is the automatic
+fallback decoder used only when native_image.py's real native-library
+bridge isn't available on a given device/build.
 """
 
 import struct

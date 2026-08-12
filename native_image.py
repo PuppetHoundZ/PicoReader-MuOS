@@ -57,6 +57,11 @@ packed RGB24, scale_n meaning "decode/scale to n/8 of full resolution"
 -- so main.py's ImageLoader needs zero changes beyond which function
 `decode_jpeg` points to. Disk cache format, memory budgeting, and
 texture-creation code are all unaffected.
+
+See main.py's own "CROSS-FILE ARCHITECTURE MAP" for how this file
+fits into the whole project -- short version: this is the only file
+that decodes images via the device's real native library; main.py
+calls into it and never re-implements decoding itself.
 """
 
 import ctypes

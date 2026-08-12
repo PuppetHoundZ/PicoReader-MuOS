@@ -69,7 +69,10 @@ the same hardware and ended up becoming the main passion project.
 - **Library organization** — pin favorites, mark books Finished/
   Unfinished with a filter to match, sort by title/author/last read/
   recently added, and a "Continue Reading" shortcut that jumps straight
-  into your most recently read book. There's also an optional "Open
+  into your most recently read book. Real folder navigation (New/Move/
+  Delete Folder, multi-select batch move) lives together in one "Edit
+  Library" submenu, kept separate from the everyday sort/filter/pin
+  actions so the main menu stays short. There's also an optional "Open
   Last Book on Launch" toggle if you'd rather skip the Library screen
   entirely and land right back in your book on startup.
 - **A built-in image cache** you can manage from the Settings screen,
@@ -125,10 +128,25 @@ Open Last Book on Launch, and more).
 ## Downloading books on-device
 
 PicoReader can browse and download books without needing a computer.
-Included out of the box is `gutenberg_fetch.py`, which pulls
-public-domain books directly from
-[Project Gutenberg](https://www.gutenberg.org)'s own official OPDS
-catalog feed — no third-party API in between.
+Two sources are included out of the box:
+
+- **`gutenberg_fetch.py`** pulls public-domain books directly from
+  [Project Gutenberg](https://www.gutenberg.org)'s own official OPDS
+  catalog feed — no third-party API in between.
+- **`librivox_fetch.py`** streams and downloads free public-domain
+  **audiobooks** from [LibriVox](https://librivox.org), browsed through
+  145 real genre categories (a proper nested drill-down, not a flat
+  list) or by search. Streaming is the default action, with a
+  full-book download available too.
+
+Every category — from either source — is always browsed live; nothing
+is ever served from a stale local snapshot, so what you see is always
+what's really there right now. The one exception is deliberate: a
+**"Downloaded Audiobooks"** entry always sits at the top of LibriVox's
+category list, showing exactly what you've already downloaded (grouped
+by book, so tracks never get mixed between titles), fully browsable
+offline. Anything downloaded — a whole audiobook or a single track —
+can be deleted right from there.
 
 Want to add your own source? See `PLUGIN_TEMPLATE.py` for the plugin
 contract — it's a small, self-contained interface.
@@ -171,9 +189,10 @@ please open an issue or PR.
 
 The app is just the contents of this repo. Stage everything inside a
 folder named `PicoReader/` (`main.py`, `epub_engine.py`, `mini_jpeg.py`,
-`native_image.py`, `gutenberg_fetch.py`, `mux_launch.sh`, `assets/`,
-`README.md`, `LICENSE.md`), then zip from **one level above** that
-folder so `PicoReader/` itself is the zip's top-level entry:
+`native_image.py`, `native_media.py`, `gutenberg_fetch.py`,
+`librivox_fetch.py`, `mux_launch.sh`, `assets/`, `README.md`,
+`LICENSE.md`), then zip from **one level above** that folder so
+`PicoReader/` itself is the zip's top-level entry:
 
 ```
 zip -r PicoReader.muxapp PicoReader/
@@ -196,8 +215,10 @@ the same way as a downloaded release.
 | `epub_engine.py` | Parses EPUB files (no external libraries needed) |
 | `mini_jpeg.py` | Decodes JPEG images, including progressive JPEGs, in pure Python |
 | `native_image.py` | Optional ctypes bridge to the device's own `libSDL2_image` for much faster decoding of JPEG, PNG, and other formats — used automatically when available, with `mini_jpeg.py` as the automatic JPEG-only fallback |
+| `native_media.py` | ctypes bridge to the device's own `mpv`/`ffplay` for audio/video streaming and playback — what LibriVox's audiobook streaming runs on |
 | `mux_launch.sh` | Tells muOS how to launch the app |
 | `gutenberg_fetch.py` | The built-in Project Gutenberg downloader |
+| `librivox_fetch.py` | The built-in LibriVox audiobook downloader/streamer |
 | `PLUGIN_TEMPLATE.py` | Starting point for writing your own downloader |
 | `assets/` | Bundled fonts (see License below) |
 

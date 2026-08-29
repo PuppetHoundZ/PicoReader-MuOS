@@ -1,7 +1,7 @@
 """
 librivox_fetch.py
 
-Current version: v26.08.07.23 (matches main.py's date-based scheme,
+Current version: v26.08.26.06 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
 behavior near the relevant code, same convention used throughout this
 project.
@@ -171,13 +171,13 @@ main.py integration lands):
   SUPPORTS_SEARCH = True
   SUPPORTS_CATEGORIES = True
   CATEGORY_TREE: nested list of {"name": str, "genre": str,
-      "children": [...]} -- see get_category_children()/
-      is_leaf_category() below for the traversal API a menu system
-      should use. A node with non-empty "children" is a browsable
-      folder, but its "genre" is still a usable filter on its own --
-      some LibriVox parents (e.g. "Poetry") are valid genres AND
-      have children; passing the parent name filters broadly,
-      drilling into a child narrows further.
+      "children": [...]} -- see get_category_children() below for the
+      traversal API a menu system should use. A node with non-empty
+      "children" is a browsable folder, but its "genre" is still a
+      usable filter on its own -- some LibriVox parents (e.g.
+      "Poetry") are valid genres AND have children; passing the
+      parent name filters broadly, drilling into a child narrows
+      further.
   list_items(query=None, page=1, category=None) -> (items, has_next, error)
       category, if given, must be a "genre" value from CATEGORY_TREE
       (any node, not just leaves).
@@ -264,7 +264,15 @@ SUPPORTS_STREAMING = True
 
 API_BASE = "https://librivox.org/api/feed/audiobooks"
 USER_AGENT = "PicoReader/muOS (+https://github.com/PuppetHoundZ/PicoReader-MuOS)"
-REQUEST_TIMEOUT = 15
+# v26.08.26.03 (Kaleb's report: "timeout searches a lot when it can't
+# find anything"): a genuinely NO-MATCH query (the API's 404 response)
+# is specifically and repeatably slow -- live-measured 11-25s across
+# repeated identical no-match calls, vs. 0.2-3.9s for a matching
+# search. Set well above that worst case. Loading screen already shows
+# a live spinner + elapsed-seconds counter (draw_download_browse()'s
+# dl_loading branch in main.py), so a slow-but-working response
+# doesn't read as a hang, and B still backs out at any point.
+REQUEST_TIMEOUT = 35
 PAGE_SIZE = 20
 
 # v26.08.06.01: real track-file hosts, live-confirmed (see the archive.
@@ -451,17 +459,6 @@ def _flatten_categories(tree, depth=0, out=None):
 CATEGORIES = [CATEGORY_DOWNLOADED] + _flatten_categories(CATEGORY_TREE)
 
 
-def _count_nodes(tree):
-    total = 0
-    for node in tree:
-        total += 1
-        total += _count_nodes(node["children"])
-    return total
-
-
-CATEGORY_COUNT = _count_nodes(CATEGORY_TREE)  # 145, live-verified 2026-08-05
-
-
 def get_category_children(path):
     """path: list of node names from root to a node (e.g.
     ["Non-fiction", "History"]). Empty list/None = root level.
@@ -475,11 +472,6 @@ def get_category_children(path):
             return None
         nodes = match["children"]
     return nodes
-
-
-def is_leaf_category(path):
-    children = get_category_children(path)
-    return not children
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +584,13 @@ def find_by_gutenberg_id(gb_id, title_hint=None):
 
     Returns: (confirmed_items: list, error: str|None)
     """
+    # v26.08.26.04 (Kaleb's request, "whatever is simpler but functions
+    # the same"): was its own standalone urlopen+404-handling block,
+    # duplicating exactly what _fetch_books() already does for
+    # list_items(). Consolidated to share it -- functionally identical
+    # (same 404-is-empty-not-error semantics), and any future fix to
+    # that shared error handling (e.g. the REQUEST_TIMEOUT raise) now
+    # only has to happen in one place instead of two.
     if not gb_id:
         return [], "No Gutenberg ID provided"
     try:
@@ -604,16 +603,9 @@ def find_by_gutenberg_id(gb_id, title_hint=None):
     if query:
         params["title"] = query
 
-    try:
-        data = _api_get(params)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return [], None
-        return [], str(e)
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
-        return [], str(e)
-
-    books = data.get("books") if isinstance(data, dict) else None
+    books, err = _fetch_books(params)
+    if err:
+        return [], err
     if not books:
         return [], None
 
@@ -665,9 +657,47 @@ def _normalize_title_query(title):
     if not title:
         return title
     normalized = re.sub(r"^(The|A|An)\s+", "", title.strip(), flags=re.IGNORECASE)
-    if ":" in normalized:
-        normalized = normalized.split(":", 1)[0].strip()
+    # v26.08.26.02 REAL BUG FIX (Kaleb's report, reproduced with "Moby
+    # Dick"): only ":" was ever split on here, but classic-lit titles
+    # commonly use "; or, " for the same subtitle role ("Moby Dick; or,
+    # The Whale", "Robinson Crusoe; or, The Life and Strange
+    # Adventures..."). title= is a literal prefix match with no
+    # fuzziness (see module docstring) -- live-confirmed the real EPUB
+    # title "Moby Dick; Or, The Whale" only prefix-matched ONE of the
+    # two real LibriVox recordings (the one whose own title happens to
+    # keep a semicolon), missing the far more common recording (whose
+    # title uses a comma: "Moby Dick, or the Whale") entirely. Splitting
+    # on ";" the same as ":" reduces the query to "Moby Dick", which
+    # live-confirmed matches BOTH real recordings (Gutenberg IDs 2701
+    # and 15) -- letting find_by_gutenberg_id()'s own exact-ID check
+    # correctly confirm whichever one matches the person's actual EPUB.
+    split_pos = min((p for p in (normalized.find(":"), normalized.find(";")) if p != -1), default=-1)
+    if split_pos != -1:
+        normalized = normalized[:split_pos].strip()
     return normalized
+
+
+def _fetch_books(params):
+    """Shared low-level fetch used by both the title= and author=
+    attempts in list_items() below. Returns (books: list|None,
+    error: str|None) -- books is None (not []) specifically for the
+    404 "no matches for this query" case, so callers can tell "found
+    zero" apart from "call itself failed"."""
+    try:
+        data = _api_get(params)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # v26.08.05.04: confirmed live -- a 404 here means "no
+            # matching audiobooks", the API's normal empty-result
+            # signal for title=/author=/genre= misses, not a real
+            # network/server error. Surface as zero results, not an
+            # error.
+            return None, None
+        return None, str(e)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        return None, str(e)
+    books = data.get("books") if isinstance(data, dict) else None
+    return books, None
 
 
 def list_items(query=None, page=1, category=None):
@@ -679,6 +709,7 @@ def list_items(query=None, page=1, category=None):
     if offset:
         params["offset"] = str(offset)
 
+    search_term = None
     if query:
         query = query.strip()
         # v26.08.06.12: normalize BEFORE the ^ auto-anchor below --
@@ -689,11 +720,14 @@ def list_items(query=None, page=1, category=None):
         # Find Audiobook use.
         if not query.startswith("^"):
             query = _normalize_title_query(query)
-        # v26.08.05.04: title= only supports "starts with" (via ^) or
-        # exact full match -- no substring search exists in this API
-        # (see module docstring). Auto-anchor so typed queries behave
-        # as prefix search rather than requiring an exact full title.
-        params["title"] = query if query.startswith("^") else f"^{query}"
+        # v26.08.05.04: title=/author= only support "starts with" (via
+        # ^) or exact full match -- no substring search exists in this
+        # API (see module docstring). Auto-anchor so typed queries
+        # behave as prefix search rather than requiring an exact full
+        # title/name. search_term (unanchored) is kept separately so
+        # the author= retry below can reuse the same normalized text.
+        search_term = query[1:] if query.startswith("^") else query
+        params["title"] = f"^{search_term}"
     if category:
         # v26.08.05.04: category may arrive with leading indentation
         # from the flattened CATEGORIES list (see _flatten_categories())
@@ -702,21 +736,43 @@ def list_items(query=None, page=1, category=None):
         # verbatim otherwise (see module docstring).
         params["genre"] = category.strip()
 
-    try:
-        data = _api_get(params)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            # v26.08.05.04: confirmed live -- a 404 here means "no
-            # matching audiobooks", the API's normal empty-result
-            # signal for title=/genre= misses, not a real network/
-            # server error. Surface as zero results, not an error.
-            return [], False, None
-        return [], False, str(e)
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
-        return [], False, str(e)
+    books, err = _fetch_books(params)
 
-    books = data.get("books") if isinstance(data, dict) else None
-    if books is None:
+    # v26.08.26.03 (Kaleb's report: an author search like "Lovecraft"
+    # returned almost nothing). title= only matches the TITLE field --
+    # a search for "Lovecraft" only found the one book whose title
+    # happens to start with that word, missing 10+ real Lovecraft-
+    # authored recordings (confirmed live: author=^Lovecraft finds
+    # them). Triggers on FEW title matches, not just zero -- a single
+    # weak title hit ("Lovecraft's Influences and Favorites") still
+    # counts as "found something" and needs the same fallback. Merges
+    # title+author results (dedup by LibriVox id, title hits first)
+    # rather than replacing, so a real title match isn't lost. Only
+    # applied on page 1: merging two independently-paginated API
+    # result sets has no clean offset semantics for page 2+, and page
+    # 1 is the only page seen before a caller decides whether to page
+    # further. has_next stays keyed to the raw title-search's own
+    # next-page signal in the merged case, since a "next page" of a
+    # merge would need its own dedup-tracking this function doesn't
+    # have.
+    AUTHOR_FALLBACK_THRESHOLD = 5
+    if search_term and not err and page == 1 and len(books or []) < AUTHOR_FALLBACK_THRESHOLD:
+        author_params = dict(params)
+        author_params["author"] = f"^{search_term}"
+        del author_params["title"]
+        a_books, a_err = _fetch_books(author_params)
+        if not a_err and a_books:
+            seen_ids = {b.get("id") for b in (books or [])}
+            merged = list(books or [])
+            for b in a_books:
+                if b.get("id") not in seen_ids:
+                    merged.append(b)
+                    seen_ids.add(b.get("id"))
+            books, err = merged, None
+
+    if err:
+        return [], False, err
+    if not books:
         return [], False, None
 
     items = []
@@ -766,16 +822,6 @@ def sanitize_folder_name(label):
     if len(cleaned) > 120:
         cleaned = cleaned[:120].rstrip()
     return cleaned or "Untitled"
-
-
-def _sanitize_name(name):
-    # v26.08.05.04: was a runtime import of another plugin's own
-    # sanitize_folder_name(), with a weaker local fallback -- see
-    # sanitize_folder_name() above (v26.08.06.24) for why that cross-
-    # plugin dependency was removed. Now just calls this file's own
-    # real implementation directly, no import, no fallback needed
-    # (there's nothing that can fail here anymore).
-    return sanitize_folder_name(name)
 
 
 def list_book_tracks(item):
@@ -867,7 +913,7 @@ def download(item, dest_dir):
     if not tracks:
         return False, f'No audio tracks found for "{title}"', None
 
-    book_dir = os.path.join(dest_dir, _sanitize_name(title))
+    book_dir = os.path.join(dest_dir, sanitize_folder_name(title))
     try:
         os.makedirs(book_dir, exist_ok=True)
     except OSError as e:
@@ -883,7 +929,7 @@ def download(item, dest_dir):
             failed += 1
             continue
         ext = os.path.splitext(urllib.parse.urlparse(url).path)[1] or ".mp3"
-        fname = f"{i:02d} - {_sanitize_name(track_title)}{ext}"
+        fname = f"{i:02d} - {sanitize_folder_name(track_title)}{ext}"
         fpath = os.path.join(book_dir, fname)
         if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
             skipped += 1

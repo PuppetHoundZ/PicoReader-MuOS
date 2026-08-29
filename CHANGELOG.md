@@ -4,6 +4,76 @@ All notable changes to PicoReader are documented here. Entries are
 added at release time, not every development session — for the
 day-to-day build log, see the AI notes at the top of `main.py`.
 
+## v26.08.27.07
+
+### Fixed
+
+- **LibriVox author searches now actually find the author's work.**
+  Searching a name like "Lovecraft" used to return almost nothing —
+  LibriVox's search only matches book titles, not authors, so a
+  search for an author's name only ever caught the rare book whose
+  *title* happened to start with that word. Author search now falls
+  back automatically when a title search comes up thin, merging in
+  the real author-matched results.
+- **LibriVox searches no longer time out on "no results."** A
+  genuine no-match search from LibriVox's own server was
+  measured taking 11–25 seconds to respond — well past the app's old
+  15-second timeout, which made a real (if slow) "nothing found"
+  answer look like a network failure. Timeout raised with real
+  margin above the worst measured case.
+- **A stale search title no longer lingers on screen.** Using Find
+  Audiobook on one book, then a different book right after, could
+  leave the *first* book's title sitting in the LibriVox screen's
+  header even though the results below were for the second book.
+- **Fixed a real freeze risk on the Library screen.** Sorting by
+  "Last Read," or just having the Library or Library Menu screen
+  open, was silently re-reading and re-parsing your entire
+  bookmarks file from disk once *per book, every single frame* —
+  scaling directly with library size. Now loaded once per screen
+  update instead of once per book.
+
+### Performance
+
+- **Chapter navigation and the Chapters screen are now measurably
+  faster to open**, especially on very large books (a full Bible
+  edition's internal chapter/spine lookup went from a linear scan to
+  a constant-time lookup).
+- Removed several long-standing inefficiencies in LibriVox audiobook
+  browsing and playback: duplicate library-scan imports, a
+  redundant duplicate implementation of a network-error-handling
+  path, and repeated filesystem probing for the installed media
+  player on every track of a queue instead of once per session.
+
+### Maintenance
+
+- Removed several genuinely dead functions (never called from
+  anywhere) found via real cross-file reference checking, not just
+  code reading: an orphaned JW Broadcasting category handler, an
+  unused category-tree counter, and a couple of small pass-through
+  wrapper functions.
+- Corrected a few stale code comments that no longer matched current
+  behavior (leftover from earlier, smaller versions of a couple of
+  screens).
+
+## v26.08.11.04
+
+### Changed
+
+- **The two-press exit confirmation now requires a real pause between
+  presses.** A fast reflexive double-tap of B no longer counts as
+  confirming — it's ignored, and the "Press B again to exit" prompt
+  stays up so a genuinely-paused second press still works normally.
+
+## v26.08.11.03
+
+### Added
+
+- **Confirm before quitting.** The Library screen now asks you to
+  press B a second time before actually closing the app — the first
+  press shows a "Press B again to exit" prompt, and any other button
+  cancels it. Only applies at the library's top level; B while
+  browsing into a folder still just goes up a level, as before.
+
 ## v26.08.11.02
 
 ### Maintenance

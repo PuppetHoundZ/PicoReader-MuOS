@@ -1,7 +1,7 @@
 """
 native_media.py
 
-Current version: v26.08.06.30
+Current version: v26.08.27.07
 
 Optional PicoReader feature: play video/audio content -- streamed
 directly from any plugin-registered domain (see register_stream_
@@ -204,6 +204,25 @@ def _shuffled_order(items, kind):
     return final_order
 
 
+def _resolve_queue_order(items, shuffle, start_index, queue_kind):
+    """v26.08.21.07 (duplicate-code consolidation, checking the plugin/
+    engine files after the main.py sweep). This 8-line "build the
+    playback order -- either freshly shuffled, or a single clamped
+    start index" setup was duplicated identically between play_video_
+    queue() and play_audio_queue(), differing only in the queue_kind
+    string passed through to _shuffled_order()'s own per-kind shuffle-
+    memory. The much larger playback loops that follow this setup in
+    each function are genuinely different (video vs audio control
+    flow) and are NOT touched -- only this shared setup is."""
+    order = list(range(len(items)))
+    if shuffle:
+        order = _shuffled_order(items, queue_kind)
+        pos = 0
+    else:
+        pos = max(0, min(start_index, len(order) - 1))
+    return order, pos
+
+
 def is_allowed_stream_url(url):
     """True only for https:// URLs whose host is exactly one of the
     domains a plugin has registered via register_stream_domains(), or
@@ -342,8 +361,14 @@ def maybe_trim_memory(clear_caches_fn):
 _FFPLAY_CANDIDATES = ("/usr/bin/ffplay", "ffplay")
 
 
-def find_ffplay():
-    for candidate in _FFPLAY_CANDIDATES:
+def _find_executable(candidates):
+    """v26.08.21.07 (duplicate-code consolidation, checking the plugin/
+    engine files after the main.py sweep, Kaleb's request). find_
+    ffplay() and find_mpv() were identical except for the candidate
+    tuple -- same "try the standard absolute path first, fall back to
+    PATH lookup" pattern. Parameterized here; both keep their own
+    names/docstrings/call sites unchanged everywhere else."""
+    for candidate in candidates:
         if os.path.isabs(candidate):
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 return candidate
@@ -353,6 +378,10 @@ def find_ffplay():
             if found:
                 return found
     return None
+
+
+def find_ffplay():
+    return _find_executable(_FFPLAY_CANDIDATES)
 
 
 # ---------------------------------------------------------------------------
@@ -1344,16 +1373,63 @@ _MPV_CANDIDATES = ("/usr/bin/mpv", "mpv")
 
 
 def find_mpv():
-    for candidate in _MPV_CANDIDATES:
-        if os.path.isabs(candidate):
-            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                return candidate
-        else:
-            from shutil import which
-            found = which(candidate)
-            if found:
-                return found
-    return None
+    return _find_executable(_MPV_CANDIDATES)
+
+
+_media_player_cache = {}
+
+
+def _resolve_media_player(player_pref):
+    """v26.08.21.12 (duplicate-code consolidation, checking native_
+    media.py after the earlier find_ffplay/find_mpv/_resolve_queue_
+    order pass, Kaleb's request). The "pick mpv-first or ffplay-first
+    based on player_pref, falling back to the other if the preferred
+    one isn't found" block was duplicated identically in play_video_
+    source() and play_audio_file() -- differing only in each site's
+    own "no X player found" error message, which stays at the call
+    site rather than being pulled in here. Returns (player_bin,
+    using_mpv); player_bin is None if neither binary was found.
+
+    v26.08.27.07 REAL BUG FIX (same pattern as the bookmarks.json fix
+    above): play_video_queue()/play_audio_queue() call this once PER
+    TRACK, not once per queue -- a 20-track playlist or audiobook did
+    20 redundant filesystem probes (find_ffplay()'s isfile/access
+    check, or find_mpv()'s full shutil.which() PATH scan) for a value
+    that can't change mid-process; the installed player binary's
+    location is fixed for the life of the app. Cached by player_pref
+    (not a single flat value) so a user changing the player-preference
+    Setting between separate queue plays still gets correctly
+    re-resolved for the new preference, not a stale cached answer from
+    a previous session's different setting."""
+    if player_pref in _media_player_cache:
+        return _media_player_cache[player_pref]
+    if player_pref == "ffplay":
+        player_bin = find_ffplay()
+        using_mpv = False
+        if not player_bin:
+            player_bin = find_mpv()
+            using_mpv = player_bin is not None
+    else:  # "mpv" (or any unrecognized value -- fail safe to mpv-first)
+        player_bin = find_mpv()
+        using_mpv = player_bin is not None
+        if not using_mpv:
+            player_bin = find_ffplay()
+    _media_player_cache[player_pref] = (player_bin, using_mpv)
+    return player_bin, using_mpv
+
+
+def _init_queue_playback_session():
+    """v26.08.21.12: shared 3-line queue-playback session setup
+    (idle-sleep suppression + the mutable per-item signal dict + the
+    running ok/message result tracked across the whole queue),
+    duplicated identically in play_video_queue() and play_audio_
+    queue() right before their main while-loop. Pure setup -- no
+    interactive/threaded logic touched, same conservative scope as
+    the earlier _resolve_queue_order() extraction. Returns (orig_
+    sleep, orig_display, signal, last_ok, last_msg)."""
+    orig_sleep, orig_display = suppress_idle_display()
+    signal = {"abort": False, "skip": 0}
+    return orig_sleep, orig_display, signal, True, None
 
 
 # v26.07.27.01 (cleanup, Kaleb's real-mpv-defaults control-scheme fix):
@@ -1635,17 +1711,9 @@ def play_video_source(source, is_local, sdl=None, joy_a=None, joy_b=None,
     if is_local and not os.path.isfile(source):
         return False, "Video file not found"
 
-    if player_pref == "ffplay":
-        player_bin = find_ffplay()
-        using_mpv = False
-        if not player_bin:
-            player_bin = find_mpv()
-            using_mpv = player_bin is not None
-    else:  # "mpv" (or any unrecognized value -- fail safe to mpv-first)
-        player_bin = find_mpv()
-        using_mpv = player_bin is not None
-        if not using_mpv:
-            player_bin = find_ffplay()
+    # v26.08.21.12: shared with play_audio_file(), see
+    # _resolve_media_player()'s own docstring.
+    player_bin, using_mpv = _resolve_media_player(player_pref)
     if not player_bin:
         return False, "No video player (mpv or ffplay) found on this device"
 
@@ -1802,19 +1870,13 @@ def play_video_queue(items, start_index=0, shuffle=False, sdl=None, joy_a=None, 
     if not items:
         return False, "Nothing to play"
 
-    order = list(range(len(items)))
-    if shuffle:
-        # v26.07.27.22: see _shuffled_order()'s own docstring -- avoids
-        # (best effort) reopening with the same tracks that started the
-        # LAST shuffle on this queue kind, in-RAM only for this instance.
-        order = _shuffled_order(items, "video")
-        pos = 0
-    else:
-        pos = max(0, min(start_index, len(order) - 1))
+    # v26.08.21.07: shared with play_audio_queue(), see
+    # _resolve_queue_order()'s own docstring.
+    order, pos = _resolve_queue_order(items, shuffle, start_index, "video")
 
-    orig_sleep, orig_display = suppress_idle_display()
-    signal = {"abort": False, "skip": 0}
-    last_ok, last_msg = True, None
+    # v26.08.21.12: shared with play_audio_queue(), see
+    # _init_queue_playback_session()'s own docstring.
+    orig_sleep, orig_display, signal, last_ok, last_msg = _init_queue_playback_session()
     try:
         while 0 <= pos < len(order):
             item = items[order[pos]]
@@ -2222,17 +2284,9 @@ def play_audio_file(url, sdl=None, joy_a=None, joy_b=None, joy_l=None, joy_r=Non
     elif not is_allowed_stream_url(url):
         return False, "Not a valid audio URL"
 
-    if player_pref == "ffplay":
-        player_bin = find_ffplay()
-        using_mpv = False
-        if not player_bin:
-            player_bin = find_mpv()
-            using_mpv = player_bin is not None
-    else:
-        player_bin = find_mpv()
-        using_mpv = player_bin is not None
-        if not using_mpv:
-            player_bin = find_ffplay()
+    # v26.08.21.12: shared with play_video_source(), see
+    # _resolve_media_player()'s own docstring.
+    player_bin, using_mpv = _resolve_media_player(player_pref)
     if not player_bin:
         return False, "No audio player (mpv or ffplay) found on this device"
 
@@ -2339,19 +2393,13 @@ def play_audio_queue(items, start_index=0, shuffle=False, sdl=None, joy_a=None, 
     if not items:
         return False, "Nothing to play"
 
-    order = list(range(len(items)))
-    if shuffle:
-        # v26.07.27.22: see _shuffled_order()'s own docstring -- avoids
-        # (best effort) reopening with the same tracks that started the
-        # LAST shuffle on this queue kind, in-RAM only for this instance.
-        order = _shuffled_order(items, "audio")
-        pos = 0
-    else:
-        pos = max(0, min(start_index, len(order) - 1))
+    # v26.08.21.07: shared with play_video_queue(), see
+    # _resolve_queue_order()'s own docstring.
+    order, pos = _resolve_queue_order(items, shuffle, start_index, "audio")
 
-    orig_sleep, orig_display = suppress_idle_display()
-    signal = {"abort": False, "skip": 0}
-    last_ok, last_msg = True, None
+    # v26.08.21.12: shared with play_video_queue(), see
+    # _init_queue_playback_session()'s own docstring.
+    orig_sleep, orig_display, signal, last_ok, last_msg = _init_queue_playback_session()
     try:
         while 0 <= pos < len(order):
             item = items[order[pos]]

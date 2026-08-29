@@ -14,7 +14,7 @@ publications) produce.
 Designed to be UI-agnostic so it can be driven from a terminal or an
 SDL2 render loop.
 
-Current version: v26.07.19.01 (matches main.py's date-based scheme,
+Current version: v26.08.27.04 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Non-obvious behavior is explained via inline
 "# vYY.MM.DD.XX" comments above the relevant code, same convention as
 main.py -- see that file's own AI NOTES header for the full policy.
@@ -629,6 +629,36 @@ class EpubDocument:
             self.opf_path, self.opf_dir = self._find_opf()
             self.manifest, self.spine, self.ncx_path, self.nav_path = self._parse_opf()
             self._save_opf_cache()
+        # v26.08.27.03 (Kaleb's request: "any other performance gains in
+        # this area of redundancy" -- found via real code reading, not
+        # guessed): spine_index() used to do self.spine.index(path), an
+        # O(n) linear scan of the whole spine list on EVERY call. That's
+        # called from _resolve_toc_entry_spine(), itself shared across 7
+        # sites in main.py (chapter-nav-point building, Bible/daily-text
+        # point lists, Chapters-screen "you are here" lookup) -- several
+        # of which loop over a TOC list calling it ONCE PER ENTRY. On a
+        # real large book this compounds: nwt_E.epub's spine alone is
+        # 3941 entries (see the OPF-cache comment above, same book) --
+        # an O(n) lookup called from inside an O(n)-sized loop is a real
+        # O(n^2) cost building up right where "open Chapters screen"
+        # already needs to feel instant. Built once here as a dict
+        # (spine path -> index), turning every spine_index() call into
+        # O(1). Same content as self.spine, so this can never disagree
+        # with it or need separate invalidation -- built fresh every
+        # __init__ alongside self.spine itself, cache-hit or not.
+        # v26.08.27.04 REAL BUG FIX to the ABOVE (found via an explicit
+        # duplicate-entry test, not assumed): a plain dict comprehension
+        # keeps the LAST occurrence of a repeated path, but list.index()
+        # (the old behavior) always returns the FIRST. No duplicate
+        # spine entries exist in either real book tested (wcg, nwt --
+        # both confirmed unique), so this never actually differed in
+        # practice, but building it this way guarantees the exact same
+        # first-match semantics regardless, so a future book with a
+        # genuine duplicate spine entry can't silently behave
+        # differently than before this optimization existed.
+        self._spine_index_map = {}
+        for i, path in enumerate(self.spine):
+            self._spine_index_map.setdefault(path, i)
         self.toc: list[TocEntry] = self._parse_toc()
         # v26.07.12.12: values can be EITHER set[str] (freshly built this
         # session, from the regex/XML-parse path) or list[str] (loaded
@@ -1529,10 +1559,7 @@ class EpubDocument:
         return self.zip.read(image_path)
 
     def spine_index(self, file_path: str) -> int:
-        try:
-            return self.spine.index(file_path)
-        except ValueError:
-            return -1
+        return self._spine_index_map.get(file_path, -1)
 
     def next_in_spine(self, file_path: str) -> str | None:
         i = self.spine_index(file_path)

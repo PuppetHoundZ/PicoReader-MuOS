@@ -1,6 +1,6 @@
 # PicoReader
 
-PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H** running
+PicoReader is an EPUB reader for the **Anbernic RG XX devices** running
 **muOS**. It's built from scratch in Python with no external
 dependencies — no PIL/Pillow, no pip installs, nothing to set up. Just
 copy it on and start reading.

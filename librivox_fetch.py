@@ -1,7 +1,7 @@
 """
 librivox_fetch.py
 
-Current version: v26.08.26.06 (matches main.py's date-based scheme,
+Current version: v26.10.31.01 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
 behavior near the relevant code, same convention used throughout this
 project.
@@ -934,7 +934,7 @@ def download(item, dest_dir):
         if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
             skipped += 1
             continue
-        # Stream into a ".part" file in chunks, then atomically rename it
+        # v26.10.31.01: stream into a ".part" file in chunks, then atomically rename it
         # into place -- same pattern as gutenberg_fetch.download() and
         # jw_fetch's downloaders. Writing straight to fpath used to leave a
         # truncated track behind on a mid-write failure (e.g. SD card
@@ -954,7 +954,7 @@ def download(item, dest_dir):
                             break
                         f.write(chunk)
                         written += len(chunk)
-            # resp.read(n) just returns b"" if the server drops the
+            # v26.10.31.01: resp.read(n) just returns b"" if the server drops the
             # connection early -- it doesn't raise -- so check the byte
             # count against Content-Length to catch a truncated track.
             if expected and expected.isdigit() and written != int(expected):

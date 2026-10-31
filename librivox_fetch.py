@@ -934,14 +934,39 @@ def download(item, dest_dir):
         if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
             skipped += 1
             continue
+        # Stream into a ".part" file in chunks, then atomically rename it
+        # into place -- same pattern as gutenberg_fetch.download() and
+        # jw_fetch's downloaders. Writing straight to fpath used to leave a
+        # truncated track behind on a mid-write failure (e.g. SD card
+        # full), and the "already present" skip check above would then
+        # treat that broken file as complete on every retry. Chunked reads
+        # also avoid holding a whole (often 50MB+) track in RAM at once.
+        tmp_path = fpath + ".part"
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
-            with open(fpath, "wb") as f:
-                f.write(data)
+                expected = resp.headers.get("Content-Length")
+                written = 0
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        written += len(chunk)
+            # resp.read(n) just returns b"" if the server drops the
+            # connection early -- it doesn't raise -- so check the byte
+            # count against Content-Length to catch a truncated track.
+            if expected and expected.isdigit() and written != int(expected):
+                raise OSError(f"incomplete download ({written} of {expected} bytes)")
+            os.replace(tmp_path, fpath)
             downloaded += 1
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError):
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
             failed += 1
             # v26.08.05.04: one bad track must not abort the whole
             # book -- keep going, report the count at the end. A

@@ -213,6 +213,7 @@ navigation/playback code here, it almost certainly belongs in one of
 those two files instead.
 """
 
+import http.client
 import json
 import os
 import re
@@ -961,7 +962,9 @@ def download(item, dest_dir):
                 raise OSError(f"incomplete download ({written} of {expected} bytes)")
             os.replace(tmp_path, fpath)
             downloaded += 1
-        except (urllib.error.URLError, TimeoutError, OSError):
+        # v26.10.31.01: http.client.HTTPException covers IncompleteRead (a
+        # chunked response cut off mid-track), which is NOT an OSError.
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
             try:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)

@@ -91,7 +91,7 @@ git commit message or CHANGELOG.md entry, not here.
 -------------------------------------------------------------------------
 PROJECT STATUS
 
-Current version: v26.08.27.07. Companion app to Pico8FavsSorter (same
+Current version: v26.10.31.01. Companion app to Pico8FavsSorter (same
 conventions: raw ctypes SDL2, no external deps, hint bar, controller-first
 navigation). Primary target: Anbernic RG CubeXX-H (720x720, 1GB RAM).
 Confirmed working on real hardware: RG CubeXX-H and RG34XX-SP (720x480).

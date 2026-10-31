@@ -1,7 +1,7 @@
 """
 librivox_fetch.py
 
-Current version: v26.08.26.06 (matches main.py's date-based scheme,
+Current version: v26.10.31.01 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
 behavior near the relevant code, same convention used throughout this
 project.
@@ -213,6 +213,7 @@ navigation/playback code here, it almost certainly belongs in one of
 those two files instead.
 """
 
+import http.client
 import json
 import os
 import re
@@ -934,14 +935,41 @@ def download(item, dest_dir):
         if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
             skipped += 1
             continue
+        # v26.10.31.01: stream into a ".part" file in chunks, then atomically rename it
+        # into place -- same pattern as gutenberg_fetch.download() and
+        # jw_fetch's downloaders. Writing straight to fpath used to leave a
+        # truncated track behind on a mid-write failure (e.g. SD card
+        # full), and the "already present" skip check above would then
+        # treat that broken file as complete on every retry. Chunked reads
+        # also avoid holding a whole (often 50MB+) track in RAM at once.
+        tmp_path = fpath + ".part"
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
-            with open(fpath, "wb") as f:
-                f.write(data)
+                expected = resp.headers.get("Content-Length")
+                written = 0
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        written += len(chunk)
+            # v26.10.31.01: resp.read(n) just returns b"" if the server drops the
+            # connection early -- it doesn't raise -- so check the byte
+            # count against Content-Length to catch a truncated track.
+            if expected and expected.isdigit() and written != int(expected):
+                raise OSError(f"incomplete download ({written} of {expected} bytes)")
+            os.replace(tmp_path, fpath)
             downloaded += 1
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        # v26.10.31.01: http.client.HTTPException covers IncompleteRead (a
+        # chunked response cut off mid-track), which is NOT an OSError.
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
             failed += 1
             # v26.08.05.04: one bad track must not abort the whole
             # book -- keep going, report the count at the end. A

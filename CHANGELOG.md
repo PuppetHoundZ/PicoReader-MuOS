@@ -4,6 +4,32 @@ All notable changes to PicoReader are documented here. Entries are
 added at release time, not every development session — for the
 day-to-day build log, see the AI notes at the top of `main.py`.
 
+## v26.10.31.01
+
+### Fixed
+
+- **Broken LibriVox tracks no longer get stuck.** If a track download
+  failed partway through (a dropped connection, or the SD card filling
+  up), a cut-off file could be left behind. On every retry it was
+  counted as "already present" and skipped, so that track stayed
+  broken. Tracks now download to a temporary `.part` file and are only
+  moved into place once complete; the byte count is also checked
+  against the size the server reported, so an early disconnect is
+  caught too. Failed tracks are cleaned up and retried next time.
+- **Lower memory use during LibriVox downloads.** Tracks are now saved
+  in small chunks instead of being held entirely in memory first.
+
+### Documentation
+
+- README: added the "Randomize your own theme" feature; corrected the
+  Controls table (Library R2 selects books for batch Move, Library
+  SELECT cycles the Finished/Unfinished filter, Library B backs out of
+  folders or quits with a second press, Reader SELECT toggles
+  Immersive Mode); the License section now points to
+  `FONT_LICENSE.txt`; the `.muxapp` build list now includes `glyph/`,
+  `grid/`, `PLUGIN_TEMPLATE.py` and `FONT_LICENSE.txt`.
+- `FONT_LICENSE.txt`: corrected the list of files covered by MIT.
+
 ## v26.08.27.07
 
 ### Fixed

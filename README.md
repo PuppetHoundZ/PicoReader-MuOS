@@ -81,6 +81,13 @@ the same hardware and ended up becoming the main passion project.
   options (Dim Warm, Deep Amber, Red Shift) meant for reading right
   before bed — less blue light, easier on melatonin/night vision.
   Switch anytime from the Library menu.
+- **Randomize your own theme** — generate a new, always
+  readable/contrast-safe color scheme, preview it live, then name and
+  save it as a custom theme (up to 3 saved slots). Not happy with the
+  result? Regenerate as many candidates as you like before naming and
+  saving — nothing is committed until you confirm. The same
+  regenerate-and-preview flow also works on an already-saved custom
+  theme, letting you roll a fresh look for it without losing the slot.
 - **Optional book downloaders** — browse and download books right on
   the device (see below).
 - **A boot splash screen** — a short, skippable intro (START/A/B skip
@@ -110,13 +117,14 @@ guessing. The basics:
 |---|---|---|
 | D-PAD | Scroll / move between links | Move selection (LEFT/RIGHT jump 10) |
 | A | Follow a link / confirm | Open the selected book |
-| B | Go back | Quit |
+| B | Go back | Back out of a folder, or press twice to quit |
 | L / R | Previous / next page | Font size smaller / larger |
-| L2 / R2 | Previous / next chapter | Open downloader (if installed) |
+| L2 | Previous chapter | Open downloader (if installed) |
+| R2 | Next chapter | Select / unselect a book (for batch Move) |
 | Y | Toggle fast-scroll | Change sort order |
 | X | Open the menu | Open the Library menu |
 | START | Add a bookmark here | Pin a book |
-| SELECT | -- | Mark the book Finished / Unfinished |
+| SELECT | Toggle Immersive Mode | Cycle the Finished / Unfinished filter |
 
 Book delete lives in the Library menu (X → Delete Book) rather than
 on a bare button — it always targets whichever book was highlighted
@@ -190,8 +198,8 @@ please open an issue or PR.
 The app is just the contents of this repo. Stage everything inside a
 folder named `PicoReader/` (`main.py`, `epub_engine.py`, `mini_jpeg.py`,
 `native_image.py`, `native_media.py`, `gutenberg_fetch.py`,
-`librivox_fetch.py`, `mux_launch.sh`, `assets/`, `README.md`,
-`LICENSE.md`), then zip from **one level above** that folder so
+`librivox_fetch.py`, `PLUGIN_TEMPLATE.py`, `mux_launch.sh`, `assets/`,
+`glyph/`, `grid/`, `README.md`, `LICENSE.md`, `FONT_LICENSE.txt`), then zip from **one level above** that folder so
 `PicoReader/` itself is the zip's top-level entry:
 
 ```
@@ -229,8 +237,9 @@ the file, for anyone — human or AI — picking the project back up later.
 
 This project's own code is MIT licensed. The bundled DejaVu Sans
 Condensed fonts are third-party and stay under a permissive
-Bitstream Vera-derived license. Both full license texts are in
-[`LICENSE.md`](LICENSE.md).
+Bitstream Vera-derived license. The MIT text is in
+[`LICENSE.md`](LICENSE.md) and the font license is in
+[`FONT_LICENSE.txt`](FONT_LICENSE.txt).
 
 ## A note from the author
 

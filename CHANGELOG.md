@@ -4,6 +4,25 @@ All notable changes to PicoReader are documented here. Entries are
 added at release time, not every development session — for the
 day-to-day build log, see the AI notes at the top of `main.py`.
 
+## v26.11.19.01
+
+### Security
+
+- **Oversized images inside an EPUB can no longer exhaust memory.**
+  The size limit that already protected an EPUB's text files now also
+  covers its images. Before, a specially made EPUB could hide an image
+  that expands to gigabytes when opened, and crash the app by running
+  the device out of memory.
+- **Images claiming impossible dimensions are refused before decoding.**
+  A tiny JPEG or PNG can claim to be, say, 65,535 × 65,535 pixels
+  (over 4 GB once decoded). Images over 50 megapixels are now skipped
+  and shown as an image error instead. That's far beyond any real book
+  illustration, so normal books are unaffected.
+- **LibriVox downloads only come from LibriVox's own sites.** The
+  audiobook feed and every track are now only fetched from `https://`
+  links on librivox.org or archive.org, the same rule streaming already
+  used. Every track in a real LibriVox feed passes this check.
+
 ## v26.10.31.01
 
 ### Fixed

@@ -14,7 +14,7 @@ publications) produce.
 Designed to be UI-agnostic so it can be driven from a terminal or an
 SDL2 render loop.
 
-Current version: v26.08.27.04 (matches main.py's date-based scheme,
+Current version: v26.11.19.01 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Non-obvious behavior is explained via inline
 "# vYY.MM.DD.XX" comments above the relevant code, same convention as
 main.py -- see that file's own AI NOTES header for the full policy.
@@ -721,10 +721,16 @@ class EpubDocument:
         except Exception:
             pass  # non-fatal -- worst case, next open just re-parses same as today
 
-    def _read(self, path: str) -> str:
+    def _read_bytes(self, path: str) -> bytes:
         # v26.07.15.17: check the (free, no-decompression) declared
         # size before actually decompressing -- see
         # MAX_SINGLE_FILE_DECOMPRESSED_BYTES's comment for why.
+        # v26.11.19.01: split out of _read() so EVERY zip read goes
+        # through the cap -- get_image_bytes() and the chapter-ID probe
+        # used to call self.zip.read() directly, uncapped, so a crafted
+        # EPUB image entry could still exhaust RAM. A lying (too small)
+        # declared size is also safe: zipfile stops at the declared size
+        # and raises BadZipFile on the CRC mismatch.
         try:
             declared_size = self.zip.getinfo(path).file_size
         except KeyError:
@@ -735,7 +741,10 @@ class EpubDocument:
                 f"exceeding the {MAX_SINGLE_FILE_DECOMPRESSED_BYTES}-byte safety cap"
             )
         with self.zip.open(path) as f:
-            return f.read().decode("utf-8", errors="replace")
+            return f.read()
+
+    def _read(self, path: str) -> str:
+        return self._read_bytes(path).decode("utf-8", errors="replace")
 
     def _parse_xml(self, text: str):
         # v26.07.15.16: stdlib ElementTree doesn't guard against XML
@@ -930,7 +939,7 @@ class EpubDocument:
         count = 0
         for fname in self.spine:
             try:
-                raw = self.zip.read(fname)
+                raw = self._read_bytes(fname)  # v26.11.19.01: size-capped
             except Exception:
                 continue
             if len(pattern.findall(raw)) == 1:
@@ -1556,7 +1565,9 @@ class EpubDocument:
         return text, links, images, anchor_offsets, styles, para_spans
 
     def get_image_bytes(self, image_path: str) -> bytes:
-        return self.zip.read(image_path)
+        # v26.11.19.01: size-capped like every other zip read (was a bare
+        # self.zip.read()). Callers already catch exceptions per image.
+        return self._read_bytes(image_path)
 
     def spine_index(self, file_path: str) -> int:
         return self._spine_index_map.get(file_path, -1)

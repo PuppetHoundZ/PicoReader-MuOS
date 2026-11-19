@@ -91,7 +91,7 @@ git commit message or CHANGELOG.md entry, not here.
 -------------------------------------------------------------------------
 PROJECT STATUS
 
-Current version: v26.10.31.01. Companion app to Pico8FavsSorter (same
+Current version: v26.11.19.01. Companion app to Pico8FavsSorter (same
 conventions: raw ctypes SDL2, no external deps, hint bar, controller-first
 navigation). Primary target: Anbernic RG CubeXX-H (720x720, 1GB RAM).
 Confirmed working on real hardware: RG CubeXX-H and RG34XX-SP (720x480).
@@ -2526,6 +2526,25 @@ except Exception:
     native_media = None
 
 
+# v26.11.19.01: 50 megapixels (e.g. 8660x5770) is far beyond any real EPUB
+# illustration or scanned page, while keeping a worst-case decode to a few
+# hundred MB instead of gigabytes. See decode_jpeg() below.
+MAX_IMAGE_PIXELS = 50_000_000
+
+
+def _peek_image_dims(data):
+    """(width, height) from a JPEG's SOF marker or a PNG's IHDR chunk,
+    without decoding; None for other formats or unreadable headers."""
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+            return struct.unpack(">II", data[16:24])
+        if data[:2] == b"\xff\xd8":
+            return peek_jpeg_size(data)
+    except Exception:
+        return None
+    return None
+
+
 def decode_jpeg(jpeg_bytes, scale_n=4):
     """Drop-in replacement for mini_jpeg.decode_jpeg() with the identical
     (rgb_bytes, w, h) contract. Tries the native libSDL2_image path first
@@ -2540,6 +2559,14 @@ def decode_jpeg(jpeg_bytes, scale_n=4):
     without changing behavior; the module/function names that actually
     described a JPEG-only assumption (native_jpeg.py, decode_jpeg_native)
     were the misleading ones and those did get renamed."""
+    # v26.11.19.01: refuse images whose header claims an absurd pixel
+    # count BEFORE either decoder allocates for it -- a few-KB crafted
+    # image can declare 65535x65535 (4+ GB decoded) and get the app
+    # OOM-killed on the 1GB device. Every caller already catches
+    # exceptions per image (shown as an image error, not a crash).
+    dims = _peek_image_dims(jpeg_bytes)
+    if dims and dims[0] * dims[1] > MAX_IMAGE_PIXELS:
+        raise ValueError(f"image too large to decode safely ({dims[0]}x{dims[1]})")
     if native_image is not None:
         try:
             return native_image.decode_image_native(jpeg_bytes, scale_n=scale_n)

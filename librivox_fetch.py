@@ -1,7 +1,7 @@
 """
 librivox_fetch.py
 
-Current version: v26.10.31.01 (matches main.py's date-based scheme,
+Current version: v26.11.19.01 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
 behavior near the relevant code, same convention used throughout this
 project.
@@ -283,6 +283,23 @@ PAGE_SIZE = 20
 # same registration pattern every streaming-capable plugin in this
 # project uses.
 STREAM_DOMAINS = ("archive.org", "librivox.org")
+
+
+def _is_trusted_url(url):
+    """v26.11.19.01: True only for https:// URLs on STREAM_DOMAINS (or a
+    subdomain, e.g. www.archive.org). The RSS feed URL comes from the
+    LibriVox API and each track URL from that feed; without this check
+    urllib would also follow file://, ftp:// or plain http:// links, or
+    fetch from any host a malformed/compromised feed named. Same rule
+    native_media.is_allowed_stream_url() already applies to streaming,
+    duplicated here so this plugin stays self-contained."""
+    try:
+        parts = urllib.parse.urlsplit(url or "")
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and any(
+        host == d or host.endswith("." + d) for d in STREAM_DOMAINS)
 try:
     import native_media as _native_media_for_domains
     _native_media_for_domains.register_stream_domains(STREAM_DOMAINS)
@@ -926,7 +943,7 @@ def download(item, dest_dir):
     for i, track in enumerate(tracks, start=1):
         url = track.get("url")
         track_title = track.get("title") or f"Track {i}"
-        if not url:
+        if not url or not _is_trusted_url(url):  # v26.11.19.01
             failed += 1
             continue
         ext = os.path.splitext(urllib.parse.urlparse(url).path)[1] or ".mp3"
@@ -992,6 +1009,8 @@ def link(item):
     rss_url = item.get("_lv_rss")
     if not rss_url:
         return False, "No feed URL for this item", None
+    if not _is_trusted_url(rss_url):  # v26.11.19.01
+        return False, "Feed URL is not a LibriVox/archive.org https link", None
 
     import xml.etree.ElementTree as ET
 
